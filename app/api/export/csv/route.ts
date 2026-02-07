@@ -95,7 +95,7 @@ export async function GET(request: Request) {
     });
 
     const csvContent = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .map(row => row.map((cell: string) => `"${cell}"`).join(','))
       .join('\n');
 
     // Add BOM for proper UTF-8 encoding in Excel
