@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
+/**
+ * @deprecated Use /api/analytics-new instead. This endpoint maintains backward compatibility
+ * but all new clients should use the improved analytics-new endpoint.
+ */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -152,20 +156,17 @@ export async function GET(request: Request) {
       ratingDistribution[row.rating_type] = parseInt(row.count);
     });
 
-    const bySubject: Record<string, number> = {};
-    subjectDistResult.rows.forEach((row: any) => {
-      bySubject[row.name] = parseInt(row.count);
-    });
+    const bySubject = Object.fromEntries(
+      subjectDistResult.rows.map((row: any) => [row.name, parseInt(row.count)])
+    );
 
-    const byTeacher: Record<string, number> = {};
-    teacherDistResult.rows.forEach((row: any) => {
-      byTeacher[row.name] = parseInt(row.count);
-    });
+    const byTeacher = Object.fromEntries(
+      teacherDistResult.rows.map((row: any) => [row.name, parseInt(row.count)])
+    );
 
-    const byClass: Record<string, number> = {};
-    classDistResult.rows.forEach((row: any) => {
-      byClass[row.name] = parseInt(row.count);
-    });
+    const byClass = Object.fromEntries(
+      classDistResult.rows.map((row: any) => [row.name, parseInt(row.count)])
+    );
 
     const totalStudents = parseInt(totalStudentsResult.rows[0].count);
     const avgRatings = parseFloat(avgRatingsResult.rows[0].avg_ratings || 0).toFixed(1);

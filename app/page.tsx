@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { jsPDF } from 'jspdf';
 import './globals.css';
 
@@ -50,6 +51,7 @@ interface Analytics {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<'daftar' | 'penilaian' | 'analisis'>('daftar');
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
@@ -76,8 +78,21 @@ export default function Home() {
   const [showManualAddStudentModal, setShowManualAddStudentModal] = useState(false);
   const [manualStudentName, setManualStudentName] = useState('');
   const [manualStudentClass, setManualStudentClass] = useState<string>('');
+  const [currentUser, setCurrentUser] = useState<string>('');
 
   useEffect(() => {
+    // Check authentication
+    const token = localStorage.getItem('authToken');
+    const user = localStorage.getItem('user');
+    
+    if (!token) {
+      router.push('/login');
+      return;
+    }
+    
+    if (user) {
+      setCurrentUser(user);
+    }
     loadClasses();
     loadStudents();
     if (activeTab === 'penilaian') {
@@ -149,6 +164,25 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error loading analytics:', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('user');
+      router.push('/login');
+    } catch (error) {
+      console.error('Error logging out:', error);
+      // Still logout locally even if server request fails
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('user');
+      router.push('/login');
     }
   };
 
@@ -593,6 +627,14 @@ export default function Home() {
     <div className="app-container">
       <div className="header">
         <h1>📚 Sistem Pengurusan Penilaian Murid</h1>
+        <div className="header-actions">
+          <div className="user-info">
+            <span>👤 {currentUser}</span>
+            <button onClick={handleLogout} className="logout-btn">
+              🚪 Keluar
+            </button>
+          </div>
+        </div>
         <div className="nav-tabs">
           <button
             className={`nav-tab ${activeTab === 'daftar' ? 'active' : ''}`}
