@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import PDFDocument from 'pdfkit';
 
 export async function GET(
   request: Request,
@@ -52,98 +51,54 @@ export async function GET(
       [assessmentId, assessment.class_id]
     );
 
-    // Generate PDF
-    const pdfBuffer = await generatePDF(assessment, studentsResult.rows);
+    // Generate CSV (PDF is now generated client-side with jsPDF)
+    const csvContent = generateCSV(assessment, studentsResult.rows);
 
-    // Return PDF as file
+    // Return CSV as file
     const headers = new Headers();
-    headers.append('Content-Type', 'application/pdf');
-    headers.append('Content-Disposition', `attachment; filename="penilaian-${assessment.class_name}-${new Date().toISOString().split('T')[0]}.pdf"`);
+    headers.append('Content-Type', 'text/csv');
+    headers.append('Content-Disposition', `attachment; filename="penilaian-${assessment.class_name}-${new Date().toISOString().split('T')[0]}.csv"`);
 
-    return new NextResponse(new Uint8Array(pdfBuffer), {
+    return new NextResponse(csvContent, {
       status: 200,
       headers: headers,
     });
   } catch (error) {
-    console.error('Error exporting assessment to PDF:', error);
+    console.error('Error exporting assessment to CSV:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to export assessment to PDF' },
+      { success: false, error: 'Failed to export assessment to CSV' },
       { status: 500 }
     );
   }
 }
 
-async function generatePDF(assessment: any, students: any[]): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
-    const chunks: Buffer[] = [];
-
-    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    // Title
-    doc.fontSize(18).font('Helvetica-Bold').text('Laporan Penilaian Murid', { align: 'center' });
-    doc.moveDown(0.5);
-
-    // Assessment details
-    doc.fontSize(11).font('Helvetica');
-    doc.text(`Kelas: ${assessment.class_name}`);
-    doc.text(`Guru: ${assessment.teacher_name || 'Tidak Ditentukan'}`);
-    doc.text(`Subjek: ${assessment.subject_name || 'Tidak Ditentukan'}`);
-    if (assessment.topic) {
-      doc.text(`Topik: ${assessment.topic}`);
-    }
-    doc.text(`Tarikh: ${new Date(assessment.assessment_date).toLocaleDateString('ms-MY')}`);
-    doc.moveDown(0.8);
-
-    // Table headers
-    const tableTop = doc.y;
-    const col1X = 40;
-    const col2X = 80;
-    const col3X = 300;
-    const rowHeight = 20;
-
-    doc.fontSize(10).font('Helvetica-Bold');
-    doc.text('BIL', col1X, tableTop);
-    doc.text('NAMA MURID', col2X, tableTop);
-    doc.text('TAHAP PENGUASAAN', col3X, tableTop);
-
-    // Draw line under header
-    doc.moveTo(40, tableTop + rowHeight - 2).lineTo(550, tableTop + rowHeight - 2).stroke();
-
-    // Table data
-    doc.fontSize(9).font('Helvetica');
-    let yPos = tableTop + rowHeight;
-    const pageHeight = doc.page.height;
-    const bottomMargin = 40;
-
-    students.forEach((student, index) => {
-      // Check if we need a new page
-      if (yPos + rowHeight > pageHeight - bottomMargin) {
-        doc.addPage();
-        yPos = 40;
-        // Repeat header on new page
-        doc.fontSize(10).font('Helvetica-Bold');
-        doc.text('BIL', col1X, yPos);
-        doc.text('NAMA MURID', col2X, yPos);
-        doc.text('TAHAP PENGUASAAN', col3X, yPos);
-        doc.moveTo(40, yPos + rowHeight - 2).lineTo(550, yPos + rowHeight - 2).stroke();
-        yPos += rowHeight;
-        doc.fontSize(9).font('Helvetica');
-      }
-
-      const ratingText = student.rating_type || 'Belum dinilai';
-      doc.text(`${index + 1}`, col1X, yPos);
-      doc.text(student.name, col2X, yPos);
-      doc.text(ratingText, col3X, yPos);
-
-      yPos += rowHeight;
-    });
-
-    // Footer
-    doc.fontSize(8).text(`Dijana pada: ${new Date().toLocaleString('ms-MY')}`, 40, pageHeight - 20, { align: 'center' });
-
-    doc.end();
+function generateCSV(assessment: any, students: any[]): string {
+  // CSV generation
+  const lines: string[] = [];
+  
+  // Header info
+  lines.push('Laporan Penilaian Murid');
+  lines.push(`Kelas,${assessment.class_name}`);
+  lines.push(`Guru,${assessment.teacher_name || 'Tidak Ditentukan'}`);
+  lines.push(`Subjek,${assessment.subject_name || 'Tidak Ditentukan'}`);
+  if (assessment.topic) {
+    lines.push(`Topik,${assessment.topic}`);
+  }
+  lines.push(`Tarikh,${new Date(assessment.assessment_date).toLocaleDateString('ms-MY')}`);
+  lines.push('');
+  
+  // Table headers
+  lines.push('BIL,NAMA MURID,TAHAP PENGUASAAN');
+  
+  // Table data
+  students.forEach((student, index) => {
+    const ratingText = student.rating_type || 'Belum dinilai';
+    const name = student.name.replace(/,/g, ';'); // Replace commas with semicolons in names
+    lines.push(`${index + 1},${name},${ratingText}`);
   });
+  
+  lines.push('');
+  lines.push(`Dijana pada,${new Date().toLocaleString('ms-MY')}`);
+  
+  return lines.join('\n');
 }
