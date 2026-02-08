@@ -3,79 +3,117 @@ import { query } from '@/lib/db';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { students: studentsList } = body;
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
 
-    if (!Array.isArray(studentsList) || studentsList.length === 0) {
+    if (!file) {
       return NextResponse.json(
-        { success: false, error: 'No students provided' },
+        { success: false, error: 'No file provided' },
         { status: 400 }
       );
     }
 
-    const results = {
-      successCount: 0,
-      failureCount: 0,
-      errors: [] as string[],
-      createdStudentIds: [] as number[],
-    };
+    // Read CSV file
+    const text = await file.text();
+    const lines = text.split('\n').filter(line => line.trim());
+    
+    if (lines.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'CSV file is empty' },
+        { status: 400 }
+      );
+    }
 
-    // Process each student - only create unique_students, no enrollments yet
-    for (let i = 0; i < studentsList.length; i++) {
+    // Parse CSV (format: name,class - no header row)
+    const students = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      const parts = line.split(',').map(p => p.trim().replace(/^["']|["']$/g, ''));
+      if (parts.length >= 2) {
+        students.push({
+          name: parts[0],
+          class: parts[1]
+        });
+      }
+    }
+
+    if (students.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'No valid students found in CSV' },
+        { status: 400 }
+      );
+    }
+
+    let imported = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    // Process each student
+    for (let i = 0; i < students.length; i++) {
       try {
-        const { name, class: studentClass } = studentsList[i];
+        const { name, class: studentClass } = students[i];
 
         if (!name || !name.trim()) {
-          results.failureCount++;
-          results.errors.push(`Row ${i + 1}: Student name is required`);
+          failed++;
+          errors.push(`Row ${i + 1}: Student name is required`);
           continue;
         }
 
-        // Get or create unique student
-        let uniqueStudentResult = await query(
-          `SELECT id FROM unique_students WHERE name = $1`,
-          [name.trim()]
-        );
-
-        if (uniqueStudentResult.rows.length === 0) {
-          uniqueStudentResult = await query(
-            `INSERT INTO unique_students (name) VALUES ($1) RETURNING id`,
-            [name.trim()]
-          );
+        if (!studentClass || !studentClass.trim()) {
+          failed++;
+          errors.push(`Row ${i + 1}: Class is required`);
+          continue;
         }
-
-        const uniqueStudentId = uniqueStudentResult.rows[0].id;
-
-        let classId = null;
 
         // Get or create class
-        if (studentClass?.trim()) {
-          let classResult = await query(
-            `SELECT id FROM classes WHERE name = $1`,
+        let classResult = await query(
+          `SELECT id FROM classes WHERE name = $1`,
+          [studentClass.trim()]
+        );
+
+        if (classResult.rows.length === 0) {
+          classResult = await query(
+            `INSERT INTO classes (name) VALUES ($1) RETURNING id`,
             [studentClass.trim()]
           );
+        }
+        const classId = classResult.rows[0].id;
 
-          if (classResult.rows.length === 0) {
-            classResult = await query(
-              `INSERT INTO classes (name) VALUES ($1) RETURNING id`,
-              [studentClass.trim()]
-            );
-          }
-          classId = classResult.rows[0].id;
+        // Check if student already exists in this class
+        const existingStudent = await query(
+          `SELECT id FROM students WHERE name = $1 AND class_id = $2`,
+          [name.trim(), classId]
+        );
+
+        if (existingStudent.rows.length > 0) {
+          // Student already exists, skip
+          imported++;
+          continue;
         }
 
-        results.successCount++;
-        results.createdStudentIds.push(uniqueStudentId);
+        // Insert student
+        await query(
+          `INSERT INTO students (name, class_id) VALUES ($1, $2) RETURNING id`,
+          [name.trim(), classId]
+        );
+
+        imported++;
       } catch (error: any) {
-        results.failureCount++;
-        results.errors.push(`Row ${i + 1}: ${error.message}`);
+        failed++;
+        errors.push(`Row ${i + 1}: ${error.message}`);
       }
     }
 
     return NextResponse.json({
       success: true,
-      results,
-    }, { status: 201 });
+      data: {
+        imported,
+        failed,
+        errors: errors.length > 0 ? errors : undefined
+      }
+    }, { status: 200 });
   } catch (error) {
     console.error('Error bulk importing students:', error);
     return NextResponse.json(
