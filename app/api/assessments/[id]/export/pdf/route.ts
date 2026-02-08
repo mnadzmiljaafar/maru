@@ -6,7 +6,14 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const assessmentId = params.id;
+    const assessmentId = parseInt(params.id, 10);
+
+    if (isNaN(assessmentId)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid assessment ID' },
+        { status: 400 }
+      );
+    }
 
     // Get assessment details
     const assessmentResult = await query(
@@ -37,29 +44,89 @@ export async function GET(
 
     const assessment = assessmentResult.rows[0];
 
+    // Get subtopics
+    const subtopicsResult = await query(
+      'SELECT id, name FROM subtopics WHERE assessment_id = $1 ORDER BY id',
+      [assessmentId]
+    );
+    const subtopics = subtopicsResult.rows;
+
     // Get all students and their ratings for this assessment
     const studentsResult = await query(
       `SELECT 
         st.id,
         st.name,
-        st.class_id,
-        r.rating_type
+        st.class_id
       FROM students st
-      LEFT JOIN ratings r ON st.id = r.student_id AND r.assessment_id = $1
-      WHERE st.class_id = $2
+      WHERE st.class_id = $1
       ORDER BY st.name`,
-      [assessmentId, assessment.class_id]
+      [assessment.class_id]
     );
 
-    // Generate CSV (PDF is now generated client-side with jsPDF)
-    const csvContent = generateCSV(assessment, studentsResult.rows);
+    // For each student, get all ratings (subtopic-specific and overall)
+    const studentsWithRatings = await Promise.all(
+      studentsResult.rows.map(async (student: any) => {
+        const ratingsResult = await query(
+          `SELECT 
+            r.rating_type,
+            r.subtopic_id,
+            sub.name as subtopic_name
+          FROM ratings r
+          LEFT JOIN subtopics sub ON r.subtopic_id = sub.id
+          WHERE r.student_id = $1 AND r.assessment_id = $2`,
+          [student.id, assessmentId]
+        );
+
+        // Calculate average if subtopics exist
+        let averageRating = null;
+        if (subtopics.length > 0) {
+          const subtopicRatings = ratingsResult.rows.filter((r: any) => r.subtopic_id !== null);
+          if (subtopicRatings.length > 0) {
+            const ratingValues = subtopicRatings
+              .map((r: any) => {
+                if (r.rating_type === 'TD') return null;
+                return parseInt(r.rating_type.replace('TP', ''), 10);
+              })
+              .filter((v: number | null) => v !== null);
+
+            if (ratingValues.length > 0) {
+              const avg = ratingValues.reduce((a: number, b: number) => a + b, 0) / ratingValues.length;
+              if (avg >= 5.5) averageRating = 'TP6';
+              else if (avg >= 4.5) averageRating = 'TP5';
+              else if (avg >= 3.5) averageRating = 'TP4';
+              else if (avg >= 2.5) averageRating = 'TP3';
+              else if (avg >= 1.5) averageRating = 'TP2';
+              else averageRating = 'TP1';
+            } else if (subtopicRatings.length > 0) {
+              // All ratings are TD
+              averageRating = 'TD';
+            }
+          }
+        } else {
+          // No subtopics, use direct rating
+          const directRating = ratingsResult.rows.find((r: any) => r.subtopic_id === null);
+          averageRating = directRating?.rating_type || null;
+        }
+
+        return {
+          ...student,
+          ratings: ratingsResult.rows,
+          averageRating,
+        };
+      })
+    );
+
+    // Generate CSV with UTF-8 BOM for proper encoding (supports Arabic and special characters)
+    const csvContent = generateCSV(assessment, studentsWithRatings, subtopics);
+    const utf8BOM = '\uFEFF'; // UTF-8 BOM for proper encoding in Excel
+    const csvWithBOM = utf8BOM + csvContent;
 
     // Return CSV as file
     const headers = new Headers();
-    headers.append('Content-Type', 'text/csv');
+    headers.append('Content-Type', 'text/csv; charset=utf-8');
     headers.append('Content-Disposition', `attachment; filename="penilaian-${assessment.class_name}-${new Date().toISOString().split('T')[0]}.csv"`);
 
-    return new NextResponse(csvContent, {
+    return new NextResponse(csvWithBOM, {
       status: 200,
       headers: headers,
     });
@@ -72,12 +139,12 @@ export async function GET(
   }
 }
 
-function generateCSV(assessment: any, students: any[]): string {
+function generateCSV(assessment: any, students: any[], subtopics: any[]): string {
   // CSV generation
   const lines: string[] = [];
   
   // Header info
-  lines.push('Laporan Penilaian Murid');
+  lines.push('REKOD PERKEMBANGAN MURID');
   lines.push(`Kelas,${assessment.class_name}`);
   lines.push(`Guru,${assessment.teacher_name || 'Tidak Ditentukan'}`);
   lines.push(`Subjek,${assessment.subject_name || 'Tidak Ditentukan'}`);
@@ -88,13 +155,33 @@ function generateCSV(assessment: any, students: any[]): string {
   lines.push('');
   
   // Table headers
-  lines.push('BIL,NAMA MURID,TAHAP PENGUASAAN');
+  const headerCols = ['BIL', 'NAMA MURID'];
+  
+  if (subtopics.length > 0) {
+    subtopics.forEach((st: any) => {
+      headerCols.push(st.name.replace(/,/g, ';'));
+    });
+  }
+  
+  headerCols.push('PURATA');
+  lines.push(headerCols.join(','));
   
   // Table data
   students.forEach((student, index) => {
-    const ratingText = student.rating_type || 'Belum dinilai';
-    const name = student.name.replace(/,/g, ';'); // Replace commas with semicolons in names
-    lines.push(`${index + 1},${name},${ratingText}`);
+    const rowCols = [
+      (index + 1).toString(),
+      student.name.replace(/,/g, ';'), // Replace commas with semicolons in names
+    ];
+    
+    if (subtopics.length > 0) {
+      subtopics.forEach((st: any) => {
+        const rating = student.ratings.find((r: any) => r.subtopic_id === st.id);
+        rowCols.push(rating?.rating_type || 'TD');
+      });
+    }
+    
+    rowCols.push(student.averageRating || 'Belum dinilai');
+    lines.push(rowCols.join(','));
   });
   
   lines.push('');

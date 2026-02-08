@@ -1,5 +1,6 @@
 -- Drop existing tables to reset schema
 DROP TABLE IF EXISTS ratings CASCADE;
+DROP TABLE IF EXISTS subtopics CASCADE;
 DROP TABLE IF EXISTS assessments CASCADE;
 DROP TABLE IF EXISTS students CASCADE;
 DROP TABLE IF EXISTS teachers CASCADE;
@@ -56,15 +57,25 @@ CREATE TABLE IF NOT EXISTS assessments (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create ratings table - one rating per student per assessment
+-- Create subtopics table - optional subtopics under each assessment
+CREATE TABLE IF NOT EXISTS subtopics (
+    id SERIAL PRIMARY KEY,
+    assessment_id INTEGER NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create ratings table - one rating per student per assessment, can be per subtopic
 CREATE TABLE IF NOT EXISTS ratings (
     id SERIAL PRIMARY KEY,
     student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     assessment_id INTEGER NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+    subtopic_id INTEGER REFERENCES subtopics(id) ON DELETE CASCADE,
     rating_type VARCHAR(10) CHECK (rating_type IS NULL OR rating_type IN ('TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(student_id, assessment_id)
+    UNIQUE(student_id, assessment_id, subtopic_id)
 );
 
 -- Create indexes for better query performance
@@ -77,8 +88,10 @@ CREATE INDEX IF NOT EXISTS idx_assessments_class_id ON assessments(class_id);
 CREATE INDEX IF NOT EXISTS idx_assessments_teacher_id ON assessments(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_assessments_subject_id ON assessments(subject_id);
 CREATE INDEX IF NOT EXISTS idx_assessments_date ON assessments(assessment_date);
+CREATE INDEX IF NOT EXISTS idx_subtopics_assessment_id ON subtopics(assessment_id);
 CREATE INDEX IF NOT EXISTS idx_ratings_student_id ON ratings(student_id);
 CREATE INDEX IF NOT EXISTS idx_ratings_assessment_id ON ratings(assessment_id);
+CREATE INDEX IF NOT EXISTS idx_ratings_subtopic_id ON ratings(subtopic_id);
 CREATE INDEX IF NOT EXISTS idx_ratings_type ON ratings(rating_type);
 
 -- Create function to update updated_at timestamp
@@ -96,4 +109,5 @@ CREATE TRIGGER update_teachers_updated_at BEFORE UPDATE ON teachers FOR EACH ROW
 CREATE TRIGGER update_subjects_updated_at BEFORE UPDATE ON subjects FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_students_updated_at BEFORE UPDATE ON students FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_assessments_updated_at BEFORE UPDATE ON assessments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_subtopics_updated_at BEFORE UPDATE ON subtopics FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_ratings_updated_at BEFORE UPDATE ON ratings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

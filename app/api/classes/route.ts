@@ -4,7 +4,7 @@ import { query } from '@/lib/db';
 export async function GET(request: Request) {
   try {
     const result = await query(
-      `SELECT id, name FROM classes ORDER BY name ASC`
+      `SELECT id, name, description FROM classes ORDER BY name ASC`
     );
 
     return NextResponse.json({
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { name } = body;
+    const { name, description } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json(
@@ -33,8 +33,8 @@ export async function POST(request: Request) {
     }
 
     const result = await query(
-      `INSERT INTO classes (name) VALUES ($1) RETURNING id, name`,
-      [name.trim()]
+      `INSERT INTO classes (name, description) VALUES ($1, $2) RETURNING id, name, description`,
+      [name.trim(), description?.trim() || null]
     );
 
     return NextResponse.json({

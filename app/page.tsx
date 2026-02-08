@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import './globals.css';
 
 interface Student {
@@ -31,11 +32,13 @@ interface Class {
 
 interface AssessmentDetail {
   assessment: Assessment;
+  subtopics: Array<{ id: number; name: string }>;
   students: Array<{
     id: number;
     name: string;
     class_id: number;
-    rating_type: string | null;
+    ratings: Array<{ rating_type: string | null; subtopic_id?: number }>;
+    averageRating?: string | null;
   }>;
 }
 
@@ -52,33 +55,31 @@ interface Analytics {
 
 export default function Home() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'daftar' | 'penilaian' | 'analisis'>('daftar');
+  const [activeTab, setActiveTab] = useState<'penilaian' | 'analisis'>('penilaian');
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
+  const [teachers, setTeachers] = useState<Array<{ id: number; name: string }>>([]);
+  const [subjects, setSubjects] = useState<Array<{ id: number; name: string }>>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [selectedAssessment, setSelectedAssessment] = useState<AssessmentDetail | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showBulkImportModal, setShowBulkImportModal] = useState(false);
-  const [bulkImportFile, setBulkImportFile] = useState<File | null>(null);
-  const [bulkImporting, setBulkImporting] = useState(false);
-  const [selectedClass, setSelectedClass] = useState<number | null>(null);
   const [showCreateAssessmentModal, setShowCreateAssessmentModal] = useState(false);
   const [newAssessment, setNewAssessment] = useState({
     class_id: '',
-    teacher_name: '',
-    subject_name: '',
+    teacher_id: '',
+    subject_id: '',
     topic: '',
     assessment_date: new Date().toISOString().split('T')[0],
+    subtopics: [''] as string[],
   });
-  const [showEditStudentModal, setShowEditStudentModal] = useState(false);
-  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
-  const [editingName, setEditingName] = useState('');
-  const [editingClass, setEditingClass] = useState<string>('');
-  const [showManualAddStudentModal, setShowManualAddStudentModal] = useState(false);
-  const [manualStudentName, setManualStudentName] = useState('');
-  const [manualStudentClass, setManualStudentClass] = useState<string>('');
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [ratingModalStudent, setRatingModalStudent] = useState<any>(null);
+  const [subtopicsForRating, setSubtopicsForRating] = useState<Array<{ id: number; name: string }>>([]);
+  const [subtopicRatings, setSubtopicRatings] = useState<Record<number, string | null>>({});
   const [currentUser, setCurrentUser] = useState<string>('');
+  const [showEditAssessmentModal, setShowEditAssessmentModal] = useState(false);
+  const [editingAssessment, setEditingAssessment] = useState<any>(null);
 
   useEffect(() => {
     // Check authentication
@@ -95,6 +96,8 @@ export default function Home() {
     }
     loadClasses();
     loadStudents();
+    loadTeachers();
+    loadSubjects();
     if (activeTab === 'penilaian') {
       loadAssessments();
     } else {
@@ -130,6 +133,30 @@ export default function Home() {
     }
   };
 
+  const loadTeachers = async () => {
+    try {
+      const response = await fetch('/api/teachers');
+      const data = await response.json();
+      if (data.success) {
+        setTeachers(data.data);
+      }
+    } catch (error) {
+      console.error('Error loading teachers:', error);
+    }
+  };
+
+  const loadSubjects = async () => {
+    try {
+      const response = await fetch('/api/subjects');
+      const data = await response.json();
+      if (data.success) {
+        setSubjects(data.data);
+      }
+    } catch (error) {
+      console.error('Error loading subjects:', error);
+    }
+  };
+
   const loadAssessments = async () => {
     try {
       setSelectedAssessment(null);
@@ -148,7 +175,44 @@ export default function Home() {
       const response = await fetch(`/api/assessments/${assessmentId}`);
       const data = await response.json();
       if (data.success) {
-        setSelectedAssessment(data.data);
+        // Calculate average ratings for students with subtopics
+        const assessmentData = data.data;
+        if (assessmentData.subtopics && assessmentData.subtopics.length > 0) {
+          assessmentData.students = assessmentData.students.map((student: any) => {
+            const ratings = student.ratings
+              .filter((r: any) => r.rating_type !== null)
+              .map((r: any) => r.rating_type);
+            
+            let averageRating = null;
+            if (ratings.length > 0) {
+              // Filter out TD values and extract numeric values from TP ratings
+              const ratingValues = ratings
+                .filter((r: string) => r !== 'TD')
+                .map((r: string) => {
+                  const match = r.match(/\d+/);
+                  return match ? parseInt(match[0]) : null;
+                })
+                .filter((v: number | null) => v !== null) as number[];
+              
+              if (ratingValues.length > 0) {
+                const average = ratingValues.reduce((a: number, b: number) => a + b, 0) / ratingValues.length;
+                
+                if (average >= 5.5) averageRating = 'TP6';
+                else if (average >= 4.5) averageRating = 'TP5';
+                else if (average >= 3.5) averageRating = 'TP4';
+                else if (average >= 2.5) averageRating = 'TP3';
+                else if (average >= 1.5) averageRating = 'TP2';
+                else averageRating = 'TP1';
+              } else {
+                // All ratings are TD
+                averageRating = 'TD';
+              }
+            }
+            
+            return { ...student, averageRating };
+          });
+        }
+        setSelectedAssessment(assessmentData);
       }
     } catch (error) {
       console.error('Error loading assessment detail:', error);
@@ -186,74 +250,27 @@ export default function Home() {
     }
   };
 
-  const handleBulkImportStudents = async () => {
-    if (!bulkImportFile) {
-      alert('Sila pilih file CSV');
-      return;
-    }
-
-    setBulkImporting(true);
-    try {
-      const text = await bulkImportFile.text();
-      const lines = text.trim().split('\n');
-
-      if (lines.length < 1) {
-        alert('File CSV kosong');
-        setBulkImporting(false);
-        return;
-      }
-
-      const studentsList = lines.map(line => {
-        const matches = line.match(/("([^"]*)"|[^,]+)/g) || [];
-        const parts = matches.map(part => part.replace(/^"|"$/g, '').trim());
-
-        return {
-          name: parts[0]?.trim() || '',
-          class_name: parts[1]?.trim() || '',
-        };
-      });
-
-      const response = await fetch('/api/students-new', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ students: studentsList }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        alert(`Berjaya: ${data.results.successCount} murid\nGagal: ${data.results.failureCount}`);
-        setBulkImportFile(null);
-        setShowBulkImportModal(false);
-        loadStudents();
-      } else {
-        alert('Gagal import: ' + data.error);
-      }
-    } catch (error) {
-      console.error('Error importing:', error);
-      alert('Gagal import data');
-    } finally {
-      setBulkImporting(false);
-    }
-  };
-
   const handleCreateAssessment = async () => {
-    if (!newAssessment.class_id || !newAssessment.teacher_name.trim() || !newAssessment.subject_name.trim() || !newAssessment.assessment_date.trim()) {
+    if (!newAssessment.class_id || !newAssessment.teacher_id || !newAssessment.subject_id || !newAssessment.assessment_date.trim()) {
       alert('Sila lengkapkan semua maklumat');
       return;
     }
 
     setLoading(true);
     try {
+      // Filter out empty subtopics
+      const filteredSubtopics = newAssessment.subtopics.filter(st => st.trim());
+
       const response = await fetch('/api/assessments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          class_id: newAssessment.class_id,
-          teacher_name: newAssessment.teacher_name,
-          subject_name: newAssessment.subject_name,
+          class_id: parseInt(newAssessment.class_id, 10),
+          teacher_id: parseInt(newAssessment.teacher_id, 10),
+          subject_id: parseInt(newAssessment.subject_id, 10),
           topic: newAssessment.topic,
           assessment_date: newAssessment.assessment_date,
+          subtopics: filteredSubtopics.length > 0 ? filteredSubtopics : null,
         }),
       });
 
@@ -263,10 +280,11 @@ export default function Home() {
         alert('Penilaian berjaya dibuat');
         setNewAssessment({
           class_id: '',
-          teacher_name: '',
-          subject_name: '',
+          teacher_id: '',
+          subject_id: '',
           topic: '',
           assessment_date: new Date().toISOString().split('T')[0],
+          subtopics: [''],
         });
         setShowCreateAssessmentModal(false);
         loadAssessments();
@@ -282,7 +300,27 @@ export default function Home() {
     }
   };
 
-  const handleRatingClick = async (studentId: number, ratingType: string, isCurrentlySelected: boolean) => {
+  const handleRatingClick = async (studentId: number, student: any) => {
+    if (!selectedAssessment) return;
+
+    // If there are subtopics, open modal for rating subtopics
+    if (selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0) {
+      setRatingModalStudent({ ...student, id: studentId });
+      setSubtopicsForRating(selectedAssessment.subtopics);
+      
+      // Initialize subtopic ratings from existing ratings
+      const ratings: Record<number, string | null> = {};
+      selectedAssessment.subtopics.forEach(subtopic => {
+        const studentRatings = student.ratings || [];
+        const subtopicRating = studentRatings.find((r: any) => r.subtopic_id === subtopic.id);
+        ratings[subtopic.id] = subtopicRating?.rating_type || null;
+      });
+      setSubtopicRatings(ratings);
+      setShowRatingModal(true);
+    }
+  };
+
+  const handleDirectRatingClick = async (studentId: number, ratingType: string, isCurrentlySelected: boolean) => {
     if (!selectedAssessment) return;
 
     try {
@@ -296,6 +334,7 @@ export default function Home() {
         body: JSON.stringify({
           student_id: studentId,
           assessment_id: selectedAssessment.assessment.id,
+          subtopic_id: null,
           rating_type: newValue,
         }),
       });
@@ -310,7 +349,10 @@ export default function Home() {
             ...prev,
             students: prev.students.map(student => {
               if (student.id === studentId) {
-                return { ...student, rating_type: newValue };
+                return { 
+                  ...student, 
+                  ratings: [{ rating_type: newValue }],
+                };
               }
               return student;
             }),
@@ -325,214 +367,270 @@ export default function Home() {
     }
   };
 
-  const getRatingValue = (student: any, ratingType: string): boolean => {
-    // Check if this student's rating_type matches the given ratingType
-    return student.rating_type === ratingType;
+  const handleSubtopicRatingChange = (subtopicId: number, ratingType: string | null) => {
+    setSubtopicRatings(prev => ({
+      ...prev,
+      [subtopicId]: prev[subtopicId] === ratingType ? null : ratingType,
+    }));
   };
 
-  const handleOpenEditStudent = (student: Student) => {
-    setEditingStudent(student);
-    setEditingName(student.name);
-    setEditingClass(student.class_id.toString());
-    setShowEditStudentModal(true);
-  };
-
-  const handleSaveEditStudent = async () => {
-    if (!editingStudent || !editingName.trim() || !editingClass) {
-      alert('Sila lengkapkan semua maklumat');
-      return;
-    }
+  const handleCloseRatingModal = async () => {
+    if (!selectedAssessment || !ratingModalStudent) return;
 
     setLoading(true);
     try {
-      const response = await fetch(`/api/students-new/${editingStudent.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: editingName.trim(),
-          class_id: parseInt(editingClass),
-        }),
+      // Save all subtopic ratings
+      for (const subtopicId of Object.keys(subtopicRatings)) {
+        const ratingType = subtopicRatings[parseInt(subtopicId)];
+        await fetch('/api/ratings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            student_id: ratingModalStudent.id,
+            assessment_id: selectedAssessment.assessment.id,
+            subtopic_id: parseInt(subtopicId),
+            rating_type: ratingType,
+          }),
+        });
+      }
+
+      // Calculate average rating
+      const ratings = Object.values(subtopicRatings).filter((r) => r !== null) as string[];
+      let averageRating = null;
+      if (ratings.length > 0) {
+        // Filter out TD values and extract numeric values from TP ratings
+        const ratingValues = ratings
+          .filter(r => r !== 'TD')
+          .map(r => {
+            const match = r.match(/\d+/);
+            return match ? parseInt(match[0]) : null;
+          })
+          .filter((v: number | null) => v !== null) as number[];
+        
+        if (ratingValues.length > 0) {
+          const average = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
+          
+          if (average >= 5.5) averageRating = 'TP6';
+          else if (average >= 4.5) averageRating = 'TP5';
+          else if (average >= 3.5) averageRating = 'TP4';
+          else if (average >= 2.5) averageRating = 'TP3';
+          else if (average >= 1.5) averageRating = 'TP2';
+          else averageRating = 'TP1';
+        } else {
+          // All ratings are TD
+          averageRating = 'TD';
+        }
+      }
+
+      // Update the student's ratings in the UI
+      setSelectedAssessment(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          students: prev.students.map(s => {
+            if (s.id === ratingModalStudent.id) {
+              // Update with the new subtopic ratings
+              const updatedRatings = selectedAssessment.subtopics.map(subtopic => ({
+                subtopic_id: subtopic.id,
+                rating_type: subtopicRatings[subtopic.id] || null,
+              }));
+              
+              return {
+                ...s,
+                ratings: updatedRatings,
+                averageRating,
+              };
+            }
+            return s;
+          }),
+        };
       });
 
-      const data = await response.json();
-
-      if (data.success) {
-        alert('Maklumat murid berjaya dikemaskini');
-        setShowEditStudentModal(false);
-        setEditingStudent(null);
-        loadStudents();
-      } else {
-        alert('Gagal kemaskini: ' + data.error);
-      }
+      setShowRatingModal(false);
+      setRatingModalStudent(null);
+      setSubtopicRatings({});
     } catch (error) {
-      console.error('Error updating student:', error);
-      alert('Gagal kemaskini murid');
+      console.error('Error saving ratings:', error);
+      alert('Gagal menyimpan penilaian');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDeleteStudent = async (student: Student) => {
-    if (!confirm(`Anda pasti ingin padam "${student.name}"? Tindakan ini tidak boleh dibuat asal.`)) {
-      return;
-    }
 
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/students-new/${student.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-      });
 
-      const data = await response.json();
-
-      if (data.success) {
-        alert('Murid berjaya dipadamkan');
-        loadStudents();
-      } else {
-        alert('Gagal padam: ' + data.error);
-      }
-    } catch (error) {
-      console.error('Error deleting student:', error);
-      alert('Gagal padam murid');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const exportAssessment = (assessmentId: number, format: 'pdf' | 'csv') => {
+  const exportAssessment = async (assessmentId: number, format: 'pdf' | 'csv') => {
     try {
       if (format === 'pdf') {
-        // Generate PDF client-side using jsPDF with proper table layout
-        const doc = new jsPDF();
-        const pageWidth = doc.internal.pageSize.getWidth();
-        const pageHeight = doc.internal.pageSize.getHeight();
-        let yPos = 15;
+        // Generate PDF using html2canvas for proper Arabic/Jawi font support
+        // Create a hidden container with the assessment table
+        const container = document.createElement('div');
+        container.style.position = 'absolute';
+        container.style.left = '-9999px';
+        container.style.top = '0';
+        container.style.width = '1200px';
+        container.style.background = 'white';
+        container.style.padding = '40px';
+        container.style.fontFamily = 'Arial, sans-serif';
 
-        // Title
-        doc.setFontSize(16);
-        doc.setFont('Helvetica', 'bold');
-        doc.text('Laporan Penilaian Murid', pageWidth / 2, yPos, { align: 'center' });
-        yPos += 12;
+        // Get subtopics
+        const subtopics = selectedAssessment?.subtopics || [];
+        const hasSubtopics = subtopics.length > 0;
 
-        // Assessment details
-        doc.setFontSize(10);
-        doc.setFont('Helvetica', 'normal');
-        doc.text(`Kelas: ${selectedAssessment?.assessment.class_name}`, 12, yPos);
-        yPos += 6;
-        doc.text(`Guru: ${selectedAssessment?.assessment.teacher_name || 'Tidak Ditentukan'}`, 12, yPos);
-        yPos += 6;
-        doc.text(`Subjek: ${selectedAssessment?.assessment.subject_name || 'Tidak Ditentukan'}`, 12, yPos);
-        yPos += 6;
-        if (selectedAssessment?.assessment.topic) {
-          doc.text(`Topik: ${selectedAssessment.assessment.topic}`, 12, yPos);
-          yPos += 6;
+        // Build HTML content
+        let htmlContent = `
+          <div style="font-family: Arial, 'Noto Sans Arabic', sans-serif;">
+            <h1 style="text-align: center; font-size: 24px; margin-bottom: 20px; font-weight: bold;">
+              REKOD PERKEMBANGAN MURID
+            </h1>
+            <div style="margin-bottom: 20px; font-size: 14px; line-height: 1.8;">
+              <p><strong>Kelas:</strong> ${selectedAssessment?.assessment.class_name}</p>
+              <p><strong>Guru:</strong> ${selectedAssessment?.assessment.teacher_name || 'Tidak Ditentukan'}</p>
+              <p><strong>Subjek:</strong> ${selectedAssessment?.assessment.subject_name || 'Tidak Ditentukan'}</p>
+              ${selectedAssessment?.assessment.topic ? `<p><strong>Topik:</strong> ${selectedAssessment.assessment.topic}</p>` : ''}
+              <p><strong>Tarikh:</strong> ${new Date(selectedAssessment?.assessment.assessment_date!).toLocaleDateString('ms-MY')}</p>
+            </div>`;
+
+        // Legend for subtopics
+        if (hasSubtopics && subtopics.length > 0) {
+          htmlContent += `
+            <div style="margin-bottom: 20px; padding: 15px; background: #f3f4f6; border-radius: 8px;">
+              <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 10px;">Standard Pembelajaran:</h3>
+              <div style="font-size: 12px; line-height: 1.6;">`;
+          
+          subtopics.forEach((st: any, idx: number) => {
+            htmlContent += `<p style="margin: 4px 0;"><strong>SP${idx + 1}:</strong> ${st.name}</p>`;
+          });
+          
+          htmlContent += `
+              </div>
+            </div>`;
         }
-        doc.text(`Tarikh: ${new Date(selectedAssessment?.assessment.assessment_date!).toLocaleDateString('ms-MY')}`, 12, yPos);
-        yPos += 12;
 
-        // Table setup
-        const col1Width = 15;  // BIL
-        const col2Width = 80;  // NAMA MURID
-        const col3Width = pageWidth - 24 - col1Width - col2Width; // TAHAP PENGUASAAN
+        // Table
+        htmlContent += `
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 20px;">
+            <thead>
+              <tr style="background: #e5e7eb;">
+                <th style="border: 1px solid #d1d5db; padding: 10px; text-align: left; font-weight: bold;">BIL</th>
+                <th style="border: 1px solid #d1d5db; padding: 10px; text-align: left; font-weight: bold;">NAMA MURID</th>`;
         
-        const col1X = 12;
-        const col2X = col1X + col1Width;
-        const col3X = col2X + col2Width;
+        if (hasSubtopics) {
+          subtopics.forEach((st: any, idx: number) => {
+            htmlContent += `<th style="border: 1px solid #d1d5db; padding: 10px; text-align: center; font-weight: bold;">SP${idx + 1}</th>`;
+          });
+        }
         
-        const headerHeight = 8;
-        const rowHeight = 8;
+        htmlContent += `
+                <th style="border: 1px solid #d1d5db; padding: 10px; text-align: center; font-weight: bold;">PURATA</th>
+              </tr>
+            </thead>
+            <tbody>`;
 
-        // Draw table header background
-        doc.setFillColor(220, 220, 220);
-        doc.rect(col1X, yPos - 6, col1Width, headerHeight, 'F');
-        doc.rect(col2X, yPos - 6, col2Width, headerHeight, 'F');
-        doc.rect(col3X, yPos - 6, col3Width, headerHeight, 'F');
+        // TP Colors mapping
+        const tpColors: { [key: string]: string } = {
+          'TP1': '#dc2626',
+          'TP2': '#f97316',
+          'TP3': '#facc15',
+          'TP4': '#84cc16',
+          'TP5': '#22c55e',
+          'TP6': '#3b82f6',
+          'TD': '#9ca3af',
+        };
 
-        // Table headers
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.text('BIL', col1X + 2, yPos);
-        doc.text('NAMA MURID', col2X + 2, yPos);
-        doc.text('TAHAP PENGUASAAN', col3X + 2, yPos);
-
-        // Draw header border
-        doc.setDrawColor(0);
-        doc.setLineWidth(0.5);
-        doc.rect(col1X, yPos - 6, col1Width, headerHeight);
-        doc.rect(col2X, yPos - 6, col2Width, headerHeight);
-        doc.rect(col3X, yPos - 6, col3Width, headerHeight);
-
-        yPos += 10;
-
-        // Student data
-        doc.setFont('Helvetica', 'normal');
-        doc.setFontSize(8);
-        
+        // Student rows
         selectedAssessment?.students.forEach((student, index) => {
-          // Check if we need a new page
-          if (yPos > pageHeight - 20) {
-            // Draw bottom border on current page
-            doc.line(col1X, yPos - 2, col1X + col1Width + col2Width + col3Width, yPos - 2);
-            
-            doc.addPage();
-            yPos = 15;
-            
-            // Repeat header on new page
-            doc.setFillColor(220, 220, 220);
-            doc.rect(col1X, yPos - 6, col1Width, headerHeight, 'F');
-            doc.rect(col2X, yPos - 6, col2Width, headerHeight, 'F');
-            doc.rect(col3X, yPos - 6, col3Width, headerHeight, 'F');
-            
-            doc.setFont('Helvetica', 'bold');
-            doc.setFontSize(9);
-            doc.text('BIL', col1X + 2, yPos);
-            doc.text('NAMA MURID', col2X + 2, yPos);
-            doc.text('TAHAP PENGUASAAN', col3X + 2, yPos);
-            
-            doc.setDrawColor(0);
-            doc.setLineWidth(0.5);
-            doc.rect(col1X, yPos - 6, col1Width, headerHeight);
-            doc.rect(col2X, yPos - 6, col2Width, headerHeight);
-            doc.rect(col3X, yPos - 6, col3Width, headerHeight);
-            
-            yPos += 10;
-            doc.setFont('Helvetica', 'normal');
-            doc.setFontSize(8);
+          htmlContent += `
+            <tr>
+              <td style="border: 1px solid #d1d5db; padding: 8px;">${index + 1}</td>
+              <td style="border: 1px solid #d1d5db; padding: 8px;">${student.name}</td>`;
+          
+          if (hasSubtopics) {
+            subtopics.forEach((subtopic: any) => {
+              const rating = student.ratings?.find((r: any) => r.subtopic_id === subtopic.id);
+              const ratingText = rating?.rating_type || 'TD';
+              const bgColor = tpColors[ratingText] || '#ffffff';
+              
+              htmlContent += `
+                <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${bgColor}; color: white; font-weight: bold;">
+                  ${ratingText}
+                </td>`;
+            });
           }
-
-          const ratingText = student.rating_type || 'Belum dinilai';
           
-          // Draw row borders
-          doc.setDrawColor(200, 200, 200);
-          doc.setLineWidth(0.3);
-          doc.line(col1X, yPos - 5, col1X, yPos + 3);  // Left border
-          doc.line(col2X, yPos - 5, col2X, yPos + 3);  // Middle border 1
-          doc.line(col3X, yPos - 5, col3X, yPos + 3);  // Middle border 2
-          doc.line(col1X + col1Width + col2Width + col3Width, yPos - 5, col1X + col1Width + col2Width + col3Width, yPos + 3); // Right border
+          const avgRating = student.averageRating || (student.ratings && student.ratings.length > 0 && !hasSubtopics ? student.ratings[0].rating_type : null) || 'Belum dinilai';
+          const avgColor = tpColors[avgRating] || '#ffffff';
+          const textColor = avgRating !== 'Belum dinilai' ? 'white' : '#6b7280';
+          const fontWeight = avgRating !== 'Belum dinilai' ? 'bold' : 'normal';
           
-          doc.text(`${index + 1}`, col1X + 2, yPos);
-          doc.text(student.name.substring(0, 35), col2X + 2, yPos); // Truncate long names
-          doc.text(ratingText, col3X + 2, yPos);
-          yPos += rowHeight;
+          htmlContent += `
+              <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${avgColor}; color: ${textColor}; font-weight: ${fontWeight};">
+                ${avgRating}
+              </td>
+            </tr>`;
         });
 
-        // Draw bottom border
-        doc.setDrawColor(0);
-        doc.setLineWidth(0.5);
-        doc.line(col1X, yPos - 2, col1X + col1Width + col2Width + col3Width, yPos - 2);
+        htmlContent += `
+            </tbody>
+          </table>
+          <div style="margin-top: 30px; text-align: center; font-size: 11px; color: #6b7280; font-style: italic;">
+            Dijana pada: ${new Date().toLocaleString('ms-MY')}
+          </div>
+        </div>`;
 
-        // Footer
-        doc.setFontSize(7);
-        doc.setFont('Helvetica', 'italic');
-        doc.text(`Dijana pada: ${new Date().toLocaleString('ms-MY')}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+        container.innerHTML = htmlContent;
+        document.body.appendChild(container);
 
-        doc.save(`penilaian-${selectedAssessment?.assessment.class_name}-${new Date().toISOString().split('T')[0]}.pdf`);
+        try {
+          // Render to canvas with high quality
+          const canvas = await html2canvas(container, {
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            backgroundColor: '#ffffff'
+          });
+
+          // Calculate PDF dimensions
+          const imgWidth = 210; // A4 width in mm
+          const imgHeight = (canvas.height * imgWidth) / canvas.width;
+          
+          // Create PDF
+          const pdf = new jsPDF({
+            orientation: imgHeight > 297 ? 'portrait' : 'portrait',
+            unit: 'mm',
+            format: 'a4'
+          });
+
+          let heightLeft = imgHeight;
+          let position = 0;
+          const pageHeight = 297; // A4 height in mm
+
+          // Add image to PDF (split into pages if needed)
+          pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+
+          while (heightLeft > 0) {
+            position = heightLeft - imgHeight;
+            pdf.addPage();
+            pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+          }
+
+          pdf.save(`penilaian-${selectedAssessment?.assessment.class_name}-${new Date().toISOString().split('T')[0]}.pdf`);
+        } finally {
+          // Clean up
+          document.body.removeChild(container);
+        }
       } else if (format === 'csv') {
         // Export as CSV
         const endpoint = `/api/assessments/${assessmentId}/export/pdf`; // PDF endpoint returns CSV
         fetch(endpoint)
-          .then(response => response.blob())
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.blob();
+          })
           .then(blob => {
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -545,7 +643,7 @@ export default function Home() {
           })
           .catch(error => {
             console.error('Error exporting CSV:', error);
-            alert('Gagal mengeksport penilaian');
+            alert('Gagal mengeksport CSV: ' + error.message);
           });
       }
     } catch (error) {
@@ -583,51 +681,133 @@ export default function Home() {
     }
   };
 
-  const handleManualAddStudent = async () => {
-    if (!manualStudentName.trim() || !manualStudentClass) {
+  const handleOpenEditAssessment = () => {
+    if (!selectedAssessment) return;
+    
+    const currentSubtopics = selectedAssessment.subtopics || [];
+    
+    setEditingAssessment({
+      id: selectedAssessment.assessment.id,
+      teacher_id: selectedAssessment.assessment.teacher_id?.toString() || '',
+      subject_id: selectedAssessment.assessment.subject_id?.toString() || '',
+      topic: selectedAssessment.assessment.topic || '',
+      assessment_date: selectedAssessment.assessment.assessment_date,
+      subtopics: currentSubtopics.map((st: any) => ({ id: st.id, name: st.name })),
+      newSubtopics: [] as string[],
+      deletedSubtopicIds: [] as number[],
+    });
+    setShowEditAssessmentModal(true);
+  };
+
+  const handleSaveEditAssessment = async () => {
+    if (!editingAssessment || !editingAssessment.teacher_id || !editingAssessment.subject_id || !editingAssessment.assessment_date) {
       alert('Sila lengkapkan semua maklumat');
       return;
     }
 
     setLoading(true);
     try {
-      const response = await fetch('/api/students-new', {
-        method: 'POST',
+      // Update basic assessment info
+      const response = await fetch(`/api/assessments/${editingAssessment.id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          students: [
-            {
-              name: manualStudentName.trim(),
-              class_name: classes.find(c => c.id === parseInt(manualStudentClass))?.name || ''
-            }
-          ]
+          teacher_id: parseInt(editingAssessment.teacher_id, 10),
+          subject_id: parseInt(editingAssessment.subject_id, 10),
+          topic: editingAssessment.topic,
+          assessment_date: editingAssessment.assessment_date,
         }),
       });
 
       const data = await response.json();
 
-      if (data.success && data.results.successCount > 0) {
-        alert('Murid berjaya ditambah');
-        setManualStudentName('');
-        setManualStudentClass('');
-        setShowManualAddStudentModal(false);
-        loadStudents();
+      if (data.success) {
+        // Handle subtopic deletions
+        if (editingAssessment.deletedSubtopicIds && editingAssessment.deletedSubtopicIds.length > 0) {
+          for (const subtopicId of editingAssessment.deletedSubtopicIds) {
+            await fetch(`/api/subtopics?id=${subtopicId}`, { method: 'DELETE' });
+          }
+        }
+
+        // Handle subtopic name updates
+        if (editingAssessment.subtopics) {
+          for (const subtopic of editingAssessment.subtopics) {
+            await fetch(`/api/subtopics/${subtopic.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: subtopic.name }),
+            });
+          }
+        }
+
+        // Handle new subtopics
+        if (editingAssessment.newSubtopics && editingAssessment.newSubtopics.length > 0) {
+          for (const subtopicName of editingAssessment.newSubtopics) {
+            if (subtopicName.trim()) {
+              await fetch('/api/subtopics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  assessment_id: editingAssessment.id,
+                  name: subtopicName.trim(),
+                }),
+              });
+            }
+          }
+        }
+
+        alert('Penilaian berjaya dikemaskini');
+        setShowEditAssessmentModal(false);
+        setEditingAssessment(null);
+        loadAssessments();
+        loadAssessmentDetail(data.data.id);
       } else {
-        alert('Gagal tambah murid: ' + (data.results?.errors?.[0] || data.error));
+        alert('Gagal kemaskini: ' + data.error);
       }
     } catch (error) {
-      console.error('Error adding student:', error);
-      alert('Gagal tambah murid');
+      console.error('Error updating assessment:', error);
+      alert('Gagal kemaskini penilaian');
     } finally {
       setLoading(false);
     }
   };
 
+
+
   return (
     <div className="app-container">
       <div className="header">
-        <h1>📚 Sistem Pengurusan Penilaian Murid</h1>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1.5rem',
+          marginBottom: '1rem'
+        }}>
+          <img 
+            src="/logo.png" 
+            alt="SK Taman Jasmin Logo" 
+            style={{
+              width: '80px',
+              height: '80px',
+              objectFit: 'contain'
+            }}
+          />
+          <div>
+            <h2 style={{
+              fontSize: '1.5rem',
+              fontWeight: '700',
+              color: 'var(--primary)',
+              margin: '0 0 0.25rem 0'
+            }}>
+              Sekolah Kebangsaan Taman Jasmin
+            </h2>
+            <h1>📚 Sistem Pengurusan Penilaian Murid</h1>
+          </div>
+        </div>
         <div className="header-actions">
+          <button onClick={() => router.push('/admin')} className="btn btn-secondary" style={{ marginRight: '10px' }}>
+            ⚙️ Admin
+          </button>
           <div className="user-info">
             <span>👤 {currentUser}</span>
             <button onClick={handleLogout} className="logout-btn">
@@ -636,12 +816,6 @@ export default function Home() {
           </div>
         </div>
         <div className="nav-tabs">
-          <button
-            className={`nav-tab ${activeTab === 'daftar' ? 'active' : ''}`}
-            onClick={() => setActiveTab('daftar')}
-          >
-            👤 Daftar Murid
-          </button>
           <button
             className={`nav-tab ${activeTab === 'penilaian' ? 'active' : ''}`}
             onClick={() => setActiveTab('penilaian')}
@@ -658,84 +832,7 @@ export default function Home() {
       </div>
 
       <div className="main-content">
-        {/* Page 1: Register Students */}
-        {activeTab === 'daftar' && (
-          <div>
-            <div className="filters-section">
-              <div className="form-group">
-                <label>Pilih Kelas *</label>
-                <select
-                  value={selectedClass || ''}
-                  onChange={(e) => setSelectedClass(e.target.value ? parseInt(e.target.value) : null)}
-                >
-                  <option value="">-- Pilih Kelas --</option>
-                  {classes.map(cls => (
-                    <option key={cls.id} value={cls.id}>{cls.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="action-buttons">
-              <button className="btn btn-primary" onClick={() => setShowBulkImportModal(true)}>
-                📥 Import Murid (CSV)
-              </button>
-              <button className="btn btn-secondary" onClick={() => setShowManualAddStudentModal(true)}>
-                ➕ Tambah Murid Baru
-              </button>
-            </div>
-
-            {loading ? (
-              <div className="empty-state">
-                <h3>Memuatkan...</h3>
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table className="students-table">
-                  <thead>
-                    <tr>
-                      <th>BIL</th>
-                      <th>NAMA MURID</th>
-                      <th>KELAS</th>
-                      <th>TINDAKAN</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {students
-                      .filter(s => !selectedClass || s.class_id === selectedClass)
-                      .map((student, index) => (
-                        <tr key={student.id}>
-                          <td>{index + 1}</td>
-                          <td>{student.name}</td>
-                          <td>{student.class_name}</td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button 
-                                className="btn btn-sm btn-outline"
-                                onClick={() => handleOpenEditStudent(student)}
-                                style={{ padding: '5px 12px', fontSize: '12px' }}
-                              >
-                                ✏️ Edit
-                              </button>
-                              <button 
-                                className="btn btn-sm btn-danger"
-                                onClick={() => handleDeleteStudent(student)}
-                                style={{ padding: '5px 12px', fontSize: '12px' }}
-                              >
-                                🗑️ Padam
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Page 2: Add Ratings */}
+        {/* Page: Add Ratings */}
         {activeTab === 'penilaian' && (
           <div>
             <div className="filters-section">
@@ -753,7 +850,7 @@ export default function Home() {
                   <option value="">-- Pilih Penilaian --</option>
                   {assessments.map(a => (
                     <option key={a.id} value={a.id}>
-                      {a.class_name} - {a.teacher_name} - {a.subject_name} ({new Date(a.assessment_date).toLocaleDateString('ms-MY')})
+                      {a.class_name} - {a.teacher_name} - {a.subject_name}{a.topic ? ` - ${a.topic}` : ''} ({new Date(a.assessment_date).toLocaleDateString('ms-MY')})
                     </option>
                   ))}
                 </select>
@@ -769,12 +866,29 @@ export default function Home() {
             {selectedAssessment ? (
               <div>
                 <div style={{ marginBottom: '20px', padding: '15px', background: '#f0f9ff', borderRadius: '8px' }}>
-                  <h3>{selectedAssessment.assessment.class_name}</h3>
-                  <p><strong>Guru:</strong> {selectedAssessment.assessment.teacher_name}</p>
-                  <p><strong>Subjek:</strong> {selectedAssessment.assessment.subject_name}</p>
-                  {selectedAssessment.assessment.topic && <p><strong>Topik:</strong> {selectedAssessment.assessment.topic}</p>}
-                  <p><strong>Tarikh:</strong> {new Date(selectedAssessment.assessment.assessment_date).toLocaleDateString('ms-MY')}</p>
-                  <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+                  <h3 style={{ textTransform: 'uppercase' }}>{selectedAssessment.assessment.class_name}</h3>
+                  <p style={{ textTransform: 'uppercase' }}><strong>GURU:</strong> {selectedAssessment.assessment.teacher_name}</p>
+                  <p style={{ textTransform: 'uppercase' }}><strong>SUBJEK:</strong> {selectedAssessment.assessment.subject_name}</p>
+                  {selectedAssessment.assessment.topic && <p style={{ textTransform: 'uppercase' }}><strong>TOPIK:</strong> {selectedAssessment.assessment.topic}</p>}
+                  <p style={{ textTransform: 'uppercase' }}><strong>TARIKH:</strong> {new Date(selectedAssessment.assessment.assessment_date).toLocaleDateString('ms-MY')}</p>
+                  {selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      <p style={{ marginBottom: '5px', textTransform: 'uppercase' }}><strong>STANDARD PEMBELAJARAN:</strong></p>
+                      <ul style={{ marginLeft: '20px', marginTop: '5px' }}>
+                        {selectedAssessment.subtopics.map((subtopic: any, idx: number) => (
+                          <li key={subtopic.id} style={{ textTransform: 'uppercase' }}>SP{idx + 1}: {subtopic.name}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleOpenEditAssessment()}
+                      style={{ padding: '8px 16px', fontSize: '14px' }}
+                    >
+                      ✏️ Edit
+                    </button>
                     <button
                       className="btn btn-secondary"
                       onClick={() => exportAssessment(selectedAssessment.assessment.id, 'pdf')}
@@ -805,29 +919,61 @@ export default function Home() {
                       <tr>
                         <th>BIL</th>
                         <th>NAMA MURID</th>
-                        <th style={{ minWidth: '500px' }}>TAHAP PENGUASAAN</th>
+                        <th style={{ minWidth: '500px' }}>TAHAP PENGUASAAN KESULURUHAN</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedAssessment.students.map((student, index) => (
-                        <tr key={student.id}>
-                          <td>{index + 1}</td>
-                          <td><strong>{student.name}</strong></td>
-                          <td>
-                            <div className="tp-buttons">
-                              {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => (
-                                <button
-                                  key={tp}
-                                  className={`tp-btn ${tp.toLowerCase()} ${getRatingValue(student, tp) ? 'selected' : ''}`}
-                                  onClick={() => handleRatingClick(student.id, tp, getRatingValue(student, tp))}
-                                >
-                                  {tp}
-                                </button>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {selectedAssessment.students.map((student, index) => {
+                        const hasSubtopics = selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0;
+                        return (
+                          <tr key={student.id}>
+                            <td>{index + 1}</td>
+                            <td><strong>{student.name}</strong></td>
+                            <td>
+                              {hasSubtopics ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <button
+                                    className="btn btn-primary"
+                                    onClick={() => handleRatingClick(student.id, student)}
+                                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                                  >
+                                    📝 Nilai
+                                  </button>
+                                  <div className="tp-buttons">
+                                    {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => {
+                                      const isAverage = student.averageRating === tp;
+                                      return (
+                                        <button
+                                          key={tp}
+                                          className={`tp-btn ${tp.toLowerCase()} ${isAverage ? 'selected' : ''}`}
+                                          style={{ cursor: 'default', pointerEvents: 'none' }}
+                                        >
+                                          {tp}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="tp-buttons">
+                                  {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => {
+                                    const isSelected = student.ratings && student.ratings.length > 0 && student.ratings[0].rating_type === tp;
+                                    return (
+                                      <button
+                                        key={tp}
+                                        className={`tp-btn ${tp.toLowerCase()} ${isSelected ? 'selected' : ''}`}
+                                        onClick={() => handleDirectRatingClick(student.id, tp, isSelected)}
+                                      >
+                                        {tp}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -899,133 +1045,10 @@ export default function Home() {
         )}
       </div>
 
-      {/* Modal: Edit Student */}
-      {showEditStudentModal && editingStudent && (
-        <div className="modal-overlay" onClick={() => { setShowEditStudentModal(false); setEditingStudent(null); }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Edit Maklumat Murid</h2>
-            <div className="form-group">
-              <label>Nama Murid *</label>
-              <input
-                type="text"
-                placeholder="Masukkan nama murid..."
-                value={editingName}
-                onChange={(e) => setEditingName(e.target.value)}
-                disabled={loading}
-              />
-            </div>
-            <div className="form-group">
-              <label>Kelas *</label>
-              <select
-                value={editingClass}
-                onChange={(e) => setEditingClass(e.target.value)}
-                disabled={loading}
-              >
-                <option value="">-- Pilih Kelas --</option>
-                {classes.map(cls => (
-                  <option key={cls.id} value={cls.id}>{cls.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="modal-buttons">
-              <button 
-                className="btn btn-outline" 
-                onClick={() => { setShowEditStudentModal(false); setEditingStudent(null); }}
-                disabled={loading}
-              >
-                Batal
-              </button>
-              <button className="btn btn-primary" onClick={handleSaveEditStudent} disabled={loading}>
-                {loading ? 'Menyimpan...' : 'Simpan'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Bulk Import Students */}
-      {showBulkImportModal && (
-        <div className="modal-overlay" onClick={() => setShowBulkImportModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
-            <h2>Import Murid (CSV)</h2>
-            <p style={{ marginBottom: '15px', fontSize: '14px', color: '#666' }}>
-              File CSV dengan 2 lajur: Nama Murid, Nama Kelas
-            </p>
-            <div className="form-group">
-              <label>Pilih File CSV</label>
-              <input
-                type="file"
-                accept=".csv"
-                onChange={(e) => setBulkImportFile(e.target.files?.[0] || null)}
-                disabled={bulkImporting}
-              />
-            </div>
-            <div style={{ marginBottom: '15px', padding: '10px', background: '#f0f9ff', borderRadius: '8px', fontSize: '12px' }}>
-              <strong>Contoh CSV (tanpa header):</strong>
-              <pre style={{ marginTop: '8px', whiteSpace: 'pre-wrap' }}>Ahmad Ali,1 TERBILANG
-Siti Hassan,1 TERBILANG
-Muthu Raman,2 CEMERLANG</pre>
-            </div>
-            <div className="modal-buttons">
-              <button className="btn btn-outline" onClick={() => { setShowBulkImportModal(false); setBulkImportFile(null); }} disabled={bulkImporting}>
-                Batal
-              </button>
-              <button className="btn btn-primary" onClick={handleBulkImportStudents} disabled={bulkImporting || !bulkImportFile}>
-                {bulkImporting ? 'Mengimport...' : 'Import'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Manual Add Student */}
-      {showManualAddStudentModal && (
-        <div className="modal-overlay" onClick={() => setShowManualAddStudentModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Tambah Murid Baru</h2>
-            <div className="form-group">
-              <label>Nama Murid *</label>
-              <input
-                type="text"
-                placeholder="Masukkan nama murid..."
-                value={manualStudentName}
-                onChange={(e) => setManualStudentName(e.target.value)}
-                disabled={loading}
-              />
-            </div>
-            <div className="form-group">
-              <label>Kelas *</label>
-              <select
-                value={manualStudentClass}
-                onChange={(e) => setManualStudentClass(e.target.value)}
-                disabled={loading}
-              >
-                <option value="">-- Pilih Kelas --</option>
-                {classes.map(cls => (
-                  <option key={cls.id} value={cls.id}>{cls.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="modal-buttons">
-              <button 
-                className="btn btn-outline" 
-                onClick={() => { setShowManualAddStudentModal(false); setManualStudentName(''); setManualStudentClass(''); }}
-                disabled={loading}
-              >
-                Batal
-              </button>
-              <button className="btn btn-primary" onClick={handleManualAddStudent} disabled={loading || !manualStudentName.trim() || !manualStudentClass}>
-                {loading ? 'Menambah...' : 'Tambah'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Modal: Create Assessment */}
       {showCreateAssessmentModal && (
         <div className="modal-overlay" onClick={() => setShowCreateAssessmentModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '90vh', overflowY: 'auto' }}>
             <h2>Buat Penilaian Baru</h2>
             <div className="form-group">
               <label>Kelas *</label>
@@ -1043,27 +1066,37 @@ Muthu Raman,2 CEMERLANG</pre>
             </div>
             <div className="form-group">
               <label>Nama Guru *</label>
-              <input
-                type="text"
-                placeholder="Masukkan nama guru..."
-                value={newAssessment.teacher_name}
-                onChange={(e) => setNewAssessment({ ...newAssessment, teacher_name: e.target.value })}
-              />
+              <select
+                value={newAssessment.teacher_id}
+                onChange={(e) => setNewAssessment({ ...newAssessment, teacher_id: e.target.value })}
+              >
+                <option value="">-- Pilih Guru --</option>
+                {teachers.map(teacher => (
+                  <option key={teacher.id} value={teacher.id}>
+                    {teacher.name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="form-group">
               <label>Subjek *</label>
-              <input
-                type="text"
-                placeholder="Masukkan subjek..."
-                value={newAssessment.subject_name}
-                onChange={(e) => setNewAssessment({ ...newAssessment, subject_name: e.target.value })}
-              />
+              <select
+                value={newAssessment.subject_id}
+                onChange={(e) => setNewAssessment({ ...newAssessment, subject_id: e.target.value })}
+              >
+                <option value="">-- Pilih Subjek --</option>
+                {subjects.map(subject => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="form-group">
               <label>Topik</label>
               <input
                 type="text"
-                placeholder="Masukkan topik (opsional)..."
+                placeholder="Masukkan topik..."
                 value={newAssessment.topic}
                 onChange={(e) => setNewAssessment({ ...newAssessment, topic: e.target.value })}
               />
@@ -1076,12 +1109,256 @@ Muthu Raman,2 CEMERLANG</pre>
                 onChange={(e) => setNewAssessment({ ...newAssessment, assessment_date: e.target.value })}
               />
             </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <label style={{ fontWeight: 'bold' }}>Standard Pembelajaran</label>
+                <button
+                  className="btn btn-sm btn-outline"
+                  onClick={() => setNewAssessment({ ...newAssessment, subtopics: [...newAssessment.subtopics, ''] })}
+                  style={{ padding: '4px 8px', fontSize: '12px' }}
+                >
+                  ➕ Tambah
+                </button>
+              </div>
+              {newAssessment.subtopics.map((subtopic, index) => (
+                <div key={index} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder={`Standard Pembelajaran ${index + 1}...`}
+                    value={subtopic}
+                    onChange={(e) => {
+                      const newSubtopics = [...newAssessment.subtopics];
+                      newSubtopics[index] = e.target.value;
+                      setNewAssessment({ ...newAssessment, subtopics: newSubtopics });
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                  {newAssessment.subtopics.length > 1 && (
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => {
+                        const newSubtopics = newAssessment.subtopics.filter((_, i) => i !== index);
+                        setNewAssessment({ ...newAssessment, subtopics: newSubtopics });
+                      }}
+                      style={{ padding: '6px 10px', fontSize: '12px' }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
             <div className="modal-buttons">
               <button className="btn btn-outline" onClick={() => setShowCreateAssessmentModal(false)} disabled={loading}>
                 Batal
               </button>
               <button className="btn btn-primary" onClick={handleCreateAssessment} disabled={loading}>
                 {loading ? 'Membuat...' : 'Buat Penilaian'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Assessment */}
+      {showEditAssessmentModal && editingAssessment && (
+        <div className="modal-overlay" onClick={() => { if (!loading) setShowEditAssessmentModal(false); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '90vh', overflowY: 'auto' }}>
+            <h2>Edit Penilaian</h2>
+            <div className="form-group">
+              <label>Nama Guru *</label>
+              <select
+                value={editingAssessment.teacher_id}
+                onChange={(e) => setEditingAssessment({ ...editingAssessment, teacher_id: e.target.value })}
+                disabled={loading}
+              >
+                <option value="">-- Pilih Guru --</option>
+                {teachers.map(teacher => (
+                  <option key={teacher.id} value={teacher.id}>
+                    {teacher.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Subjek *</label>
+              <select
+                value={editingAssessment.subject_id}
+                onChange={(e) => setEditingAssessment({ ...editingAssessment, subject_id: e.target.value })}
+                disabled={loading}
+              >
+                <option value="">-- Pilih Subjek --</option>
+                {subjects.map(subject => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Topik</label>
+              <input
+                type="text"
+                placeholder="Masukkan topik..."
+                value={editingAssessment.topic}
+                onChange={(e) => setEditingAssessment({ ...editingAssessment, topic: e.target.value })}
+                disabled={loading}
+              />
+            </div>
+            <div className="form-group">
+              <label>Tarikh *</label>
+              <input
+                type="date"
+                value={editingAssessment.assessment_date}
+                onChange={(e) => setEditingAssessment({ ...editingAssessment, assessment_date: e.target.value })}
+                disabled={loading}
+              />
+            </div>
+
+            {/* Existing Subtopics */}
+            {editingAssessment.subtopics && editingAssessment.subtopics.length > 0 && (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>Standard Pembelajaran Sedia Ada</label>
+                {editingAssessment.subtopics.map((subtopic: any, index: number) => (
+                  <div key={subtopic.id} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                    <input
+                      type="text"
+                      placeholder={`Standard Pembelajaran ${index + 1}...`}
+                      value={subtopic.name}
+                      onChange={(e) => {
+                        const newSubtopics = [...editingAssessment.subtopics];
+                        newSubtopics[index] = { ...newSubtopics[index], name: e.target.value };
+                        setEditingAssessment({ ...editingAssessment, subtopics: newSubtopics });
+                      }}
+                      style={{ flex: 1 }}
+                      disabled={loading}
+                    />
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => {
+                        const newSubtopics = editingAssessment.subtopics.filter((_: any, i: number) => i !== index);
+                        const deletedIds = [...(editingAssessment.deletedSubtopicIds || []), subtopic.id];
+                        setEditingAssessment({ 
+                          ...editingAssessment, 
+                          subtopics: newSubtopics,
+                          deletedSubtopicIds: deletedIds
+                        });
+                      }}
+                      style={{ padding: '6px 10px', fontSize: '12px' }}
+                      disabled={loading}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* New Subtopics */}
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <label style={{ fontWeight: 'bold' }}>Tambah Standard Pembelajaran Baru</label>
+                <button
+                  className="btn btn-sm btn-outline"
+                  onClick={() => {
+                    const newSubtopics = [...(editingAssessment.newSubtopics || []), ''];
+                    setEditingAssessment({ ...editingAssessment, newSubtopics });
+                  }}
+                  style={{ padding: '4px 8px', fontSize: '12px' }}
+                  disabled={loading}
+                >
+                  ➕ Tambah
+                </button>
+              </div>
+              {editingAssessment.newSubtopics && editingAssessment.newSubtopics.map((subtopic: string, index: number) => (
+                <div key={index} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder={`Standard Pembelajaran baru ${index + 1}...`}
+                    value={subtopic}
+                    onChange={(e) => {
+                      const newSubtopics = [...editingAssessment.newSubtopics];
+                      newSubtopics[index] = e.target.value;
+                      setEditingAssessment({ ...editingAssessment, newSubtopics });
+                    }}
+                    style={{ flex: 1 }}
+                    disabled={loading}
+                  />
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={() => {
+                      const newSubtopics = editingAssessment.newSubtopics.filter((_: string, i: number) => i !== index);
+                      setEditingAssessment({ ...editingAssessment, newSubtopics });
+                    }}
+                    style={{ padding: '6px 10px', fontSize: '12px' }}
+                    disabled={loading}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="modal-buttons">
+              <button 
+                className="btn btn-outline" 
+                onClick={() => { setShowEditAssessmentModal(false); setEditingAssessment(null); }}
+                disabled={loading}
+              >
+                Batal
+              </button>
+              <button className="btn btn-primary" onClick={handleSaveEditAssessment} disabled={loading}>
+                {loading ? 'Menyimpan...' : 'Simpan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Rating with Subtopics */}
+      {showRatingModal && ratingModalStudent && (
+        <div className="modal-overlay" onClick={() => { if (!loading) setShowRatingModal(false); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+            <h2>Nilai {ratingModalStudent.name}</h2>
+            <p style={{ marginBottom: '20px', fontSize: '14px', color: '#666' }}>
+              Sila pilih tahap penguasaan untuk setiap standard pembelajaran
+            </p>
+
+            {subtopicsForRating.map(subtopic => (
+              <div key={subtopic.id} style={{ marginBottom: '20px', padding: '15px', background: '#f9f9f9', borderRadius: '8px' }}>
+                <p style={{ marginBottom: '10px', fontWeight: 'bold' }}>{subtopic.name}</p>
+                <div className="tp-buttons-container" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => (
+                    <button
+                      key={tp}
+                      className={`tp-btn ${tp.toLowerCase()} ${subtopicRatings[subtopic.id] === tp ? 'selected' : ''}`}
+                      onClick={() => handleSubtopicRatingChange(subtopic.id, tp)}
+                      disabled={loading}
+                      style={{ padding: '8px 12px', fontSize: '12px' }}
+                    >
+                      {tp}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            <div className="modal-buttons">
+              <button 
+                className="btn btn-outline" 
+                onClick={() => { setShowRatingModal(false); setRatingModalStudent(null); }}
+                disabled={loading}
+              >
+                Batal
+              </button>
+              <button 
+                className="btn btn-primary" 
+                onClick={handleCloseRatingModal} 
+                disabled={loading}
+              >
+                {loading ? 'Menyimpan...' : 'Simpan Penilaian'}
               </button>
             </div>
           </div>

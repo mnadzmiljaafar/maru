@@ -29,15 +29,21 @@ export async function GET(request: Request) {
     let paramCount = 1;
 
     if (classId) {
-      queryText += ` AND a.class_id = $${paramCount}`;
-      params.push(classId);
-      paramCount++;
+      const classIdInt = parseInt(classId, 10);
+      if (!isNaN(classIdInt)) {
+        queryText += ` AND a.class_id = $${paramCount}`;
+        params.push(classIdInt);
+        paramCount++;
+      }
     }
 
     if (assessmentId) {
-      queryText += ` AND a.id = $${paramCount}`;
-      params.push(assessmentId);
-      paramCount++;
+      const assessmentIdInt = parseInt(assessmentId, 10);
+      if (!isNaN(assessmentIdInt)) {
+        queryText += ` AND a.id = $${paramCount}`;
+        params.push(assessmentIdInt);
+        paramCount++;
+      }
     }
 
     queryText += ` ORDER BY a.assessment_date DESC`;
@@ -60,11 +66,23 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { class_id, teacher_name, subject_name, topic, assessment_date } = body;
+    const { class_id, teacher_id, subject_id, topic, assessment_date, subtopics } = body;
 
-    if (!class_id || !teacher_name || !subject_name || !assessment_date) {
+    if (!class_id || !teacher_id || !subject_id || !assessment_date) {
       return NextResponse.json(
         { success: false, error: 'Class, teacher, subject, and date are required' },
+        { status: 400 }
+      );
+    }
+
+    // Parse IDs to integers
+    const classIdInt = parseInt(class_id.toString(), 10);
+    const teacherIdInt = parseInt(teacher_id.toString(), 10);
+    const subjectIdInt = parseInt(subject_id.toString(), 10);
+
+    if (isNaN(classIdInt) || isNaN(teacherIdInt) || isNaN(subjectIdInt)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid ID format' },
         { status: 400 }
       );
     }
@@ -77,58 +95,54 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get teacher or create
-    let teacherResult = await query(
-      `SELECT id FROM teachers WHERE name = $1`,
-      [teacher_name.trim()]
-    );
-
-    if (teacherResult.rows.length === 0) {
-      teacherResult = await query(
-        `INSERT INTO teachers (name) VALUES ($1) RETURNING id`,
-        [teacher_name.trim()]
-      );
-    }
-
-    const teacherId = teacherResult.rows[0].id;
-
-    // Get subject or create
-    let subjectResult = await query(
-      `SELECT id FROM subjects WHERE name = $1`,
-      [subject_name.trim()]
-    );
-
-    if (subjectResult.rows.length === 0) {
-      subjectResult = await query(
-        `INSERT INTO subjects (name) VALUES ($1) RETURNING id`,
-        [subject_name.trim()]
-      );
-    }
-
-    const subjectId = subjectResult.rows[0].id;
-
     // Create assessment
     const assessmentResult = await query(
       `INSERT INTO assessments (class_id, teacher_id, subject_id, topic, assessment_date) 
        VALUES ($1, $2, $3, $4, $5) 
        RETURNING id, class_id, teacher_id, subject_id, topic, assessment_date`,
-      [class_id, teacherId, subjectId, topic || null, assessment_date]
+      [classIdInt, teacherIdInt, subjectIdInt, topic || null, assessment_date]
     );
 
     const assessmentId = assessmentResult.rows[0].id;
 
-    // Create default rating record for all students in this class (with NULL rating_type = no rating yet)
+    // Create default rating records for all students in this class
     const studentsResult = await query(
       `SELECT id FROM students WHERE class_id = $1`,
-      [class_id]
+      [classIdInt]
     );
 
-    for (const student of studentsResult.rows) {
-      await query(
-        `INSERT INTO ratings (student_id, assessment_id, rating_type) 
-         VALUES ($1, $2, NULL)`,
-        [student.id, assessmentId]
-      );
+    // If subtopics are provided, create them and create ratings for each subtopic
+    if (subtopics && Array.isArray(subtopics) && subtopics.length > 0) {
+      for (const subtopicName of subtopics) {
+        if (subtopicName?.trim()) {
+          const subtopicResult = await query(
+            `INSERT INTO subtopics (assessment_id, name)
+             VALUES ($1, $2)
+             RETURNING id`,
+            [assessmentId, subtopicName.trim()]
+          );
+
+          const subtopicId = subtopicResult.rows[0].id;
+
+          // Create rating record for each student for this subtopic
+          for (const student of studentsResult.rows) {
+            await query(
+              `INSERT INTO ratings (student_id, assessment_id, subtopic_id, rating_type) 
+               VALUES ($1, $2, $3, NULL)`,
+              [student.id, assessmentId, subtopicId]
+            );
+          }
+        }
+      }
+    } else {
+      // No subtopics - create single rating per student (backward compatibility)
+      for (const student of studentsResult.rows) {
+        await query(
+          `INSERT INTO ratings (student_id, assessment_id, rating_type) 
+           VALUES ($1, $2, NULL)`,
+          [student.id, assessmentId]
+        );
+      }
     }
 
     return NextResponse.json({
