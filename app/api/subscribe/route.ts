@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { sendNewPaymentAdminAlert } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,16 +56,30 @@ export async function POST(request: Request) {
     );
 
     // Register the prospective customer as an inactive account so they appear in
-    // the superadmin list even before approval. Never downgrades an existing one.
+    // the superadmin list even before approval. On a returning subscriber, we
+    // refresh their contact details to the LATEST values they just entered
+    // (name/phone), but we never touch their `status` here — an already-active
+    // account renewing early stays active and isn't downgraded.
     await query(
       `INSERT INTO accounts (email, full_name, phone, role, status)
        VALUES ($1, $2, $3, 'user', 'inactive')
        ON CONFLICT (email) DO UPDATE SET
-         full_name = COALESCE(NULLIF(accounts.full_name, ''), EXCLUDED.full_name),
-         phone = COALESCE(NULLIF(accounts.phone, ''), EXCLUDED.phone),
+         full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), accounts.full_name),
+         phone = COALESCE(NULLIF(EXCLUDED.phone, ''), accounts.phone),
          updated_at = NOW()`,
       [email, fullName, phone || null]
     );
+
+    // Notify the superadmin there's a payment to review. Non-blocking: an email
+    // failure must not fail the customer's submission.
+    await sendNewPaymentAdminAlert({
+      email,
+      full_name: fullName,
+      phone,
+      amount,
+      months,
+      reference,
+    });
 
     return NextResponse.json({
       success: true,

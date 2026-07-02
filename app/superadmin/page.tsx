@@ -37,6 +37,15 @@ function fmtDate(v: string | null) {
   return new Date(v).toLocaleDateString('ms-MY', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// ISO timestamp -> yyyy-mm-dd for a <input type="date"> (local time).
+function toInputDate(v: string | null): string {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function subLabel(a: Account) {
   if (a.role === 'superadmin') return 'Superadmin';
   if (a.subscription_expires_at === null && a.status === 'active') return 'Tanpa had';
@@ -51,6 +60,7 @@ export default function SuperadminPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [busy, setBusy] = useState(false);
+  const [dateEdits, setDateEdits] = useState<Record<string, string>>({});
   const [receiptModal, setReceiptModal] = useState<{ open: boolean; src: string | null; loading: boolean }>({ open: false, src: null, loading: false });
 
   useEffect(() => {
@@ -76,7 +86,25 @@ export default function SuperadminPage() {
   const loadAccounts = async () => {
     const res = await fetch('/api/superadmin/accounts');
     const data = await res.json();
-    if (data.success) setAccounts(data.data);
+    if (data.success) {
+      setAccounts(data.data);
+      // Seed each row's date picker with the current expiry (yyyy-mm-dd).
+      const seed: Record<string, string> = {};
+      for (const a of data.data as Account[]) {
+        seed[a.email] = toInputDate(a.subscription_expires_at);
+      }
+      setDateEdits(seed);
+    }
+  };
+
+  const setEndDate = async (email: string) => {
+    const val = dateEdits[email];
+    if (!val) {
+      alert('Sila pilih tarikh tamat.');
+      return;
+    }
+    // Access lasts until the END of the chosen day.
+    await updateAccount(email, { status: 'active', expiresAt: `${val}T23:59:59` });
   };
   const loadPayments = async () => {
     const res = await fetch('/api/superadmin/payments');
@@ -261,8 +289,15 @@ export default function SuperadminPage() {
                     <td>{fmtDate(a.created_at)}</td>
                     <td>
                       {a.role !== 'superadmin' && (
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => updateAccount(a.email, { status: 'active', extendMonths: 1 })}>+1 Bulan</button>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <input
+                            type="date"
+                            value={dateEdits[a.email] ?? ''}
+                            disabled={busy}
+                            onChange={(e) => setDateEdits((prev) => ({ ...prev, [a.email]: e.target.value }))}
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 13 }}
+                          />
+                          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setEndDate(a.email)}>📅 Tetapkan Tarikh</button>
                           <button className="btn btn-sm btn-outline" disabled={busy} onClick={() => updateAccount(a.email, { status: 'active', unlimited: true })}>∞ Tanpa Had</button>
                           {a.status === 'active'
                             ? <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => updateAccount(a.email, { status: 'inactive' })}>Nyahaktif</button>

@@ -1099,10 +1099,6 @@ export default function Home() {
                 <h3>Kelas</h3>
                 <div className="value">{analytics.uniqueClasses}</div>
               </div>
-              <div className="stat-card" style={{ background: 'linear-gradient(135deg, #43e97b, #38f9d7)' }}>
-                <h3>Guru</h3>
-                <div className="value">{analytics.uniqueTeachers}</div>
-              </div>
             </div>
 
             <div className="chart-container">
@@ -1116,23 +1112,6 @@ export default function Home() {
                         <div className="bar-value">{count}</div>
                       </div>
                       <div className="bar-label">{className}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="chart-container">
-              <h3>👨‍🏫 Penilaian Mengikut Guru</h3>
-              <div className="bar-chart">
-                {Object.entries(analytics.byTeacher).map(([teacher, count]) => {
-                  const maxValue = Math.max(...Object.values(analytics.byTeacher), 1);
-                  return (
-                    <div key={teacher} className="bar-item">
-                      <div className="bar" style={{ height: `${(count / maxValue) * 100}%` }}>
-                        <div className="bar-value">{count}</div>
-                      </div>
-                      <div className="bar-label">{teacher}</div>
                     </div>
                   );
                 })}

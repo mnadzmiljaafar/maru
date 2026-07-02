@@ -17,6 +17,8 @@ const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const FROM_NAME = process.env.SMTP_FROM_NAME || 'Sistem Penilaian Murid';
 const APP_URL = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+// Where new-payment alerts go. Defaults to the sending account (yourself).
+const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || SMTP_USER;
 
 let transporter: nodemailer.Transporter | null = null;
 
@@ -82,7 +84,7 @@ export async function sendSubscriptionStarted(
   name: string | null,
   expiresAt: string | null
 ): Promise<boolean> {
-  const greeting = name ? `Salam ${name},` : 'Salam,';
+  const greeting = name ? `Hi ${name},` : 'Hi,';
   const validity = expiresAt
     ? `Langganan anda sah sehingga <strong>${fmt(expiresAt)}</strong>.`
     : `Langganan anda kini <strong>tanpa had</strong>.`;
@@ -107,7 +109,7 @@ export async function sendSubscriptionEnded(
   to: string,
   name: string | null
 ): Promise<boolean> {
-  const greeting = name ? `Salam ${name},` : 'Salam,';
+  const greeting = name ? `Hi ${name},` : 'Hi,';
   return send(
     to,
     '⏰ Langganan Anda Telah Tamat',
@@ -120,6 +122,40 @@ export async function sendSubscriptionEnded(
              style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700">
              Perbaharui Langganan</a></p>
        <p style="color:#64748b;font-size:13px">Data anda kekal selamat dan akan kembali sebaik sahaja langganan diaktifkan semula.</p>`
+    )
+  );
+}
+
+// Sent to YOU (the superadmin) when a new subscriber submits a payment, so you
+// know there's something to review/approve in the superadmin console.
+export async function sendNewPaymentAdminAlert(payment: {
+  email: string;
+  full_name?: string | null;
+  phone?: string | null;
+  amount: number | string;
+  months: number;
+  reference?: string | null;
+}): Promise<boolean> {
+  if (!ADMIN_NOTIFY_EMAIL) return false;
+  const row = (label: string, value: string) =>
+    `<tr><td style="padding:6px 10px;color:#64748b">${label}</td>
+         <td style="padding:6px 10px;font-weight:600">${value || '—'}</td></tr>`;
+  return send(
+    ADMIN_NOTIFY_EMAIL,
+    `💳 Bayaran Langganan Baharu — ${payment.full_name || payment.email}`,
+    shell(
+      'Bayaran Langganan Baharu',
+      `<p>Seorang pengguna baharu telah menghantar bayaran dan sedang menunggu pengesahan anda.</p>
+       <table style="border-collapse:collapse;margin:10px 0;font-size:14px">
+         ${row('Nama', payment.full_name || '')}
+         ${row('Email', payment.email)}
+         ${row('Telefon', payment.phone || '')}
+         ${row('Jumlah', `RM${Number(payment.amount).toFixed(2)} (${payment.months} bulan)`)}
+         ${row('Rujukan', payment.reference || '')}
+       </table>
+       <p><a href="${APP_URL}/superadmin"
+             style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700">
+             Semak &amp; Luluskan</a></p>`
     )
   );
 }
