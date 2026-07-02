@@ -1,8 +1,19 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getCurrentUser, type CurrentUser } from '@/lib/auth';
+
+// Confirms the assessment exists and the user owns it (admins may access any).
+async function ownsAssessment(assessmentId: number, user: CurrentUser): Promise<boolean> {
+  const res = await query('SELECT owner_email FROM assessments WHERE id = $1', [assessmentId]);
+  if (res.rows.length === 0) return false;
+  return user.isAdmin || res.rows[0].owner_email === user.email;
+}
 
 export async function PATCH(request: Request) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const body = await request.json();
     const { student_id, assessment_id, subtopic_id, rating_type } = body;
 
@@ -23,6 +34,10 @@ export async function PATCH(request: Request) {
         { success: false, error: 'Invalid ID format' },
         { status: 400 }
       );
+    }
+
+    if (!(await ownsAssessment(assessmentIdInt, user))) {
+      return NextResponse.json({ success: false, error: 'Assessment not found' }, { status: 404 });
     }
 
     // Update the rating record for this student-assessment combination
@@ -78,6 +93,9 @@ export async function PATCH(request: Request) {
 
 export async function GET(request: Request) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const { searchParams } = new URL(request.url);
     const assessmentId = searchParams.get('assessment_id');
     const studentId = searchParams.get('student_id');
@@ -95,6 +113,10 @@ export async function GET(request: Request) {
         { success: false, error: 'Invalid assessment ID' },
         { status: 400 }
       );
+    }
+
+    if (!(await ownsAssessment(assessmentIdInt, user))) {
+      return NextResponse.json({ success: false, error: 'Assessment not found' }, { status: 404 });
     }
 
     let queryText = `

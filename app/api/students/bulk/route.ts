@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const formData = await request.formData();
     const file = formData.get('file') as File;
 
@@ -67,16 +71,16 @@ export async function POST(request: Request) {
           continue;
         }
 
-        // Get or create class
+        // Get or create class scoped to this owner
         let classResult = await query(
-          `SELECT id FROM classes WHERE name = $1`,
-          [studentClass.trim()]
+          `SELECT id FROM classes WHERE name = $1 AND owner_email = $2`,
+          [studentClass.trim(), user.email]
         );
 
         if (classResult.rows.length === 0) {
           classResult = await query(
-            `INSERT INTO classes (name) VALUES ($1) RETURNING id`,
-            [studentClass.trim()]
+            `INSERT INTO classes (name, owner_email) VALUES ($1, $2) RETURNING id`,
+            [studentClass.trim(), user.email]
           );
         }
         const classId = classResult.rows[0].id;
@@ -95,8 +99,8 @@ export async function POST(request: Request) {
 
         // Insert student
         await query(
-          `INSERT INTO students (name, class_id) VALUES ($1, $2) RETURNING id`,
-          [name.trim(), classId]
+          `INSERT INTO students (name, class_id, owner_email) VALUES ($1, $2, $3) RETURNING id`,
+          [name.trim(), classId, user.email]
         );
 
         imported++;

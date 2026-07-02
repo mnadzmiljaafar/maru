@@ -1,41 +1,40 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getCurrentUser } from '@/lib/auth';
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export const dynamic = 'force-dynamic';
+
+export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const id = parseInt(params.id);
-    
     if (isNaN(id)) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid subject ID' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: 'Invalid subject ID' }, { status: 400 });
     }
 
     const body = await request.json();
     const { name, description } = body;
-
     if (!name || typeof name !== 'string' || name.trim() === '') {
-      return NextResponse.json(
-        { success: false, error: 'Valid name is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: 'Valid name is required' }, { status: 400 });
     }
 
-    // Check if another subject with the same name exists (excluding current)
-    const existingSubject = await query(
-      'SELECT id FROM subjects WHERE LOWER(name) = LOWER($1) AND id != $2',
-      [name.trim(), id]
-    );
+    const existing = await query('SELECT owner_email FROM subjects WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return NextResponse.json({ success: false, error: 'Subject not found' }, { status: 404 });
+    }
+    const rowOwner = existing.rows[0].owner_email;
+    if (!user.isAdmin && rowOwner !== user.email) {
+      return NextResponse.json({ success: false, error: 'Subject not found' }, { status: 404 });
+    }
 
-    if (existingSubject.rows.length > 0) {
-      return NextResponse.json(
-        { success: false, error: 'Subject with this name already exists' },
-        { status: 400 }
-      );
+    const dup = await query(
+      'SELECT id FROM subjects WHERE LOWER(name) = LOWER($1) AND id != $2 AND owner_email = $3',
+      [name.trim(), id, rowOwner]
+    );
+    if (dup.rows.length > 0) {
+      return NextResponse.json({ success: false, error: 'Subject with this name already exists' }, { status: 400 });
     }
 
     const result = await query(
@@ -43,61 +42,35 @@ export async function PATCH(
       [name.trim(), description?.trim() || null, id]
     );
 
-    if (result.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Subject not found' },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: result.rows[0],
-    });
+    return NextResponse.json({ success: true, data: result.rows[0] });
   } catch (error: any) {
     console.error('Error updating subject:', error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(request: Request, { params }: { params: { id: string } }) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const id = parseInt(params.id);
-    
     if (isNaN(id)) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid subject ID' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: 'Invalid subject ID' }, { status: 400 });
     }
 
-    const result = await query(
-      'DELETE FROM subjects WHERE id = $1 RETURNING id',
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Subject not found' },
-        { status: 404 }
-      );
+    const existing = await query('SELECT owner_email FROM subjects WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return NextResponse.json({ success: false, error: 'Subject not found' }, { status: 404 });
+    }
+    if (!user.isAdmin && existing.rows[0].owner_email !== user.email) {
+      return NextResponse.json({ success: false, error: 'Subject not found' }, { status: 404 });
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Subject deleted successfully',
-    });
+    await query('DELETE FROM subjects WHERE id = $1', [id]);
+    return NextResponse.json({ success: true, message: 'Subject deleted successfully' });
   } catch (error: any) {
     console.error('Error deleting subject:', error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

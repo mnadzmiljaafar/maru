@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getCurrentUser } from '@/lib/auth';
 
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const assessmentId = parseInt(params.id, 10);
 
     if (isNaN(assessmentId)) {
@@ -13,6 +17,12 @@ export async function GET(
         { success: false, error: 'Invalid assessment ID' },
         { status: 400 }
       );
+    }
+
+    // Verify ownership before exporting
+    const owner = await query('SELECT owner_email FROM assessments WHERE id = $1', [assessmentId]);
+    if (owner.rows.length === 0 || (!user.isAdmin && owner.rows[0].owner_email !== user.email)) {
+      return NextResponse.json({ success: false, error: 'Assessment not found' }, { status: 404 });
     }
 
     // Get assessment details

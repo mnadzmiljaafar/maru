@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import '../globals.css';
 
 interface Teacher {
@@ -49,6 +50,7 @@ export default function AdminPage() {
   
   // Filter states
   const [selectedClass, setSelectedClass] = useState<number | null>(null);
+  const [studentSearch, setStudentSearch] = useState('');
   
   // Bulk import
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
@@ -77,13 +79,6 @@ export default function AdminPage() {
   const [editClassForm, setEditClassForm] = useState({ name: '', description: '' });
 
   useEffect(() => {
-    // Check authentication
-    const token = localStorage.getItem('authToken');
-    if (!token) {
-      router.push('/login');
-      return;
-    }
-
     loadData();
   }, [activeTab]);
 
@@ -211,22 +206,29 @@ export default function AdminPage() {
     setLoading(true);
     try {
       const selectedClassData = classes.find(c => c.id === parseInt(newStudent.class_id));
-      const response = await fetch('/api/students', {
+      const response = await fetch('/api/students-new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: newStudent.name.trim(),
-          class_name: selectedClassData?.name || '',
+          students: [{
+            name: newStudent.name.trim(),
+            class_name: selectedClassData?.name || '',
+          }],
         }),
       });
 
       const data = await response.json();
-      if (data.success) {
+      if (data.success && data.results?.successCount > 0) {
         alert('Murid berjaya ditambah');
         setNewStudent({ name: '', class_id: '' });
         loadStudents();
       } else {
-        alert('Gagal tambah murid: ' + data.error);
+        const err = data.results?.errors?.[0] || data.error || '';
+        if (err.includes('already exists')) {
+          alert('Murid ini sudah wujud dalam kelas tersebut');
+        } else {
+          alert('Gagal tambah murid: ' + (err || 'Ralat tidak diketahui'));
+        }
       }
     } catch (error) {
       console.error('Error adding student:', error);
@@ -264,6 +266,19 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDownloadTemplate = () => {
+    const content = 'Ahmad Bin Ali,1A\nSiti Binti Abu,1A\nChong Wei Ming,2B\n';
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'templat-murid.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleBulkImport = async () => {
@@ -316,7 +331,7 @@ export default function AdminPage() {
 
     setLoading(true);
     try {
-      const response = await fetch(`/api/students/${editingStudent.id}`, {
+      const response = await fetch(`/api/students-new/${editingStudent.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -333,7 +348,12 @@ export default function AdminPage() {
         setEditingStudent(null);
         loadStudents();
       } else {
-        alert('Gagal kemaskini: ' + data.error);
+        const err = data.error || '';
+        if (err.includes('already exists')) {
+          alert('Murid dengan nama ini sudah wujud dalam kelas tersebut');
+        } else {
+          alert('Gagal kemaskini: ' + (err || 'Ralat tidak diketahui'));
+        }
       }
     } catch (error) {
       console.error('Error updating student:', error);
@@ -350,7 +370,7 @@ export default function AdminPage() {
 
     setLoading(true);
     try {
-      const response = await fetch(`/api/students/${student.id}`, {
+      const response = await fetch(`/api/students-new/${student.id}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -581,17 +601,13 @@ export default function AdminPage() {
   };
 
   const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('user');
-      router.push('/login');
-    } catch (error) {
-      console.error('Error logging out:', error);
-    }
+    await signOut({ callbackUrl: '/login' });
   };
 
-  const filteredStudents = students.filter(s => !selectedClass || s.class_id === selectedClass);
+  const filteredStudents = students.filter(s =>
+    (!selectedClass || s.class_id === selectedClass) &&
+    (!studentSearch.trim() || s.name.toLowerCase().includes(studentSearch.trim().toLowerCase()))
+  );
 
   return (
     <div className="app-container">
@@ -624,7 +640,7 @@ export default function AdminPage() {
           </div>
         </div>
         <div className="header-actions">
-          <button className="btn btn-secondary" onClick={() => router.push('/')}>
+          <button className="btn btn-secondary" onClick={() => router.push('/dashboard')}>
             ← Kembali
           </button>
           <button className="btn btn-outline" onClick={handleLogout}>
@@ -671,6 +687,7 @@ export default function AdminPage() {
                   placeholder="Nama murid..."
                   value={newStudent.name}
                   onChange={(e) => setNewStudent({ ...newStudent, name: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !loading) handleAddStudent(); }}
                   disabled={loading}
                 />
                 <select
@@ -695,6 +712,13 @@ export default function AdminPage() {
                 📥 Import CSV
               </button>
               <div style={{ flex: 1 }} />
+              <input
+                type="text"
+                placeholder="🔍 Cari nama murid..."
+                value={studentSearch}
+                onChange={(e) => setStudentSearch(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #ccc', minWidth: '200px' }}
+              />
               <select
                 value={selectedClass || ''}
                 onChange={(e) => setSelectedClass(e.target.value ? parseInt(e.target.value) : null)}
@@ -980,8 +1004,13 @@ export default function AdminPage() {
         <div className="modal-overlay" onClick={() => !bulkImporting && setShowBulkImportModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Import Murid (CSV)</h2>
-            <p>Format CSV: nama_murid,kelas</p>
+            <p>Format CSV: nama_murid,kelas (tanpa baris tajuk)</p>
             <p style={{ fontSize: '0.9em', color: '#666' }}>Contoh: Ahmad Bin Ali,1A</p>
+            <div style={{ margin: '12px 0' }}>
+              <button className="btn btn-outline btn-sm" onClick={handleDownloadTemplate} disabled={bulkImporting}>
+                ⬇️ Muat Turun Templat CSV
+              </button>
+            </div>
             <input
               type="file"
               accept=".csv"

@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getCurrentUser } from '@/lib/auth';
+
+export const dynamic = 'force-dynamic';
 
 interface AnalyticsResponse {
   success: boolean;
@@ -16,9 +19,19 @@ interface AnalyticsResponse {
   error?: string;
 }
 
-export async function GET(request: Request): Promise<NextResponse<AnalyticsResponse>> {
+export async function GET(): Promise<NextResponse<AnalyticsResponse>> {
   try {
-    // Fetch all analytics data in parallel
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Admins see everything; teachers see only their own data. `w(alias)` builds
+    // the owner filter appended to each query, with the owner as $1 when scoped.
+    const scoped = !user.isAdmin;
+    const w = (alias: string) => (scoped ? ` WHERE ${alias}.owner_email = $1` : '');
+    const p: any[] = scoped ? [user.email] : [];
+
     const [
       totalStudentsResult,
       totalAssessmentsResult,
@@ -29,35 +42,41 @@ export async function GET(request: Request): Promise<NextResponse<AnalyticsRespo
       assessmentsBySubjectResult,
       recentAssessmentsResult,
     ] = await Promise.all([
-      query(`SELECT COUNT(*) as count FROM students`),
-      query(`SELECT COUNT(*) as count FROM assessments`),
-      query(`SELECT COUNT(*) as count FROM classes`),
-      query(`SELECT COUNT(*) as count FROM teachers`),
+      query(`SELECT COUNT(*) as count FROM students s${w('s')}`, p),
+      query(`SELECT COUNT(*) as count FROM assessments a${w('a')}`, p),
+      query(`SELECT COUNT(*) as count FROM classes c${w('c')}`, p),
+      query(`SELECT COUNT(*) as count FROM teachers t${w('t')}`, p),
       query(
         `SELECT c.name, COUNT(s.id) as count
          FROM classes c
          LEFT JOIN students s ON c.id = s.class_id
+         ${scoped ? 'WHERE c.owner_email = $1' : ''}
          GROUP BY c.id, c.name
-         ORDER BY count DESC`
+         ORDER BY count DESC`,
+        p
       ),
       query(
         `SELECT COALESCE(t.name, 'Tidak ditentukan') as teacher_name, COUNT(a.id) as count
          FROM assessments a
          LEFT JOIN teachers t ON a.teacher_id = t.id
+         ${scoped ? 'WHERE a.owner_email = $1' : ''}
          GROUP BY t.id, t.name
          ORDER BY count DESC
-         LIMIT 10`
+         LIMIT 10`,
+        p
       ),
       query(
         `SELECT COALESCE(s.name, 'Tidak ditentukan') as subject_name, COUNT(a.id) as count
          FROM assessments a
          LEFT JOIN subjects s ON a.subject_id = s.id
+         ${scoped ? 'WHERE a.owner_email = $1' : ''}
          GROUP BY s.id, s.name
          ORDER BY count DESC
-         LIMIT 10`
+         LIMIT 10`,
+        p
       ),
       query(
-        `SELECT 
+        `SELECT
           a.id,
           a.topic,
           a.assessment_date,
@@ -68,20 +87,19 @@ export async function GET(request: Request): Promise<NextResponse<AnalyticsRespo
         JOIN classes c ON a.class_id = c.id
         LEFT JOIN teachers t ON a.teacher_id = t.id
         LEFT JOIN subjects s ON a.subject_id = s.id
+        ${scoped ? 'WHERE a.owner_email = $1' : ''}
         ORDER BY a.assessment_date DESC
-        LIMIT 10`
+        LIMIT 10`,
+        p
       ),
     ]);
 
-    // Transform results into key-value maps
     const byClass = Object.fromEntries(
       studentsByClassResult.rows.map((row: any) => [row.name, parseInt(row.count)])
     );
-
     const byTeacher = Object.fromEntries(
       assessmentsByTeacherResult.rows.map((row: any) => [row.teacher_name, parseInt(row.count)])
     );
-
     const bySubject = Object.fromEntries(
       assessmentsBySubjectResult.rows.map((row: any) => [row.subject_name, parseInt(row.count)])
     );
@@ -101,9 +119,6 @@ export async function GET(request: Request): Promise<NextResponse<AnalyticsRespo
     });
   } catch (error) {
     console.error('Error fetching analytics:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch analytics' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: 'Failed to fetch analytics' }, { status: 500 });
   }
 }

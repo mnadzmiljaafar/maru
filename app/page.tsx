@@ -1,1369 +1,253 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
-import './globals.css';
+import { useSession, signIn } from 'next-auth/react';
 
-interface Student {
-  id: number;
-  name: string;
-  class_id: number;
-  class_name: string;
-}
+const FEATURES = [
+  {
+    icon: '⭐',
+    title: 'Penilaian Tahap Penguasaan (TP1–TP6)',
+    desc: 'Nilai murid mengikut Standard Pembelajaran KSSR dengan pantas — satu klik untuk setiap tahap penguasaan, termasuk TD (Tidak Dinilai).',
+  },
+  {
+    icon: '📈',
+    title: 'Rekod Perkembangan & Purata Kelas',
+    desc: 'Lihat kemajuan penilaian setiap kelas secara masa nyata, purata penguasaan dan taburan TP dalam satu paparan kemas.',
+  },
+  {
+    icon: '📊',
+    title: 'Analisis & Carta Automatik',
+    desc: 'Carta murid mengikut kelas, penilaian mengikut guru dan subjek — faham prestasi sekolah anda sekilas pandang.',
+  },
+  {
+    icon: '📄',
+    title: 'Eksport Laporan PDF & CSV',
+    desc: 'Jana Rekod Perkembangan Murid yang kemas untuk dicetak atau dikongsi, lengkap dengan warna tahap penguasaan.',
+  },
+  {
+    icon: '👥',
+    title: 'Urus Murid, Kelas, Guru & Subjek',
+    desc: 'Pangkalan data terpusat untuk semua maklumat sekolah, termasuk import senarai murid secara pukal melalui CSV.',
+  },
+  {
+    icon: '🔒',
+    title: 'Selamat & Peribadi',
+    desc: 'Log masuk dengan Google. Data setiap guru terasing sepenuhnya — hanya anda yang boleh melihat rekod anda.',
+  },
+];
 
-interface Assessment {
-  id: number;
-  class_id: number;
-  teacher_id: number;
-  subject_id: number;
-  topic: string;
-  assessment_date: string;
-  class_name: string;
-  teacher_name: string;
-  subject_name: string;
-}
-
-interface Class {
-  id: number;
-  name: string;
-}
-
-interface AssessmentDetail {
-  assessment: Assessment;
-  subtopics: Array<{ id: number; name: string }>;
-  students: Array<{
-    id: number;
-    name: string;
-    class_id: number;
-    ratings: Array<{ rating_type: string | null; subtopic_id?: number }>;
-    averageRating?: string | null;
-  }>;
-}
-
-interface Analytics {
-  totalStudents: number;
-  totalAssessments: number;
-  uniqueClasses: number;
-  uniqueTeachers: number;
-  byClass: Record<string, number>;
-  byTeacher: Record<string, number>;
-  bySubject: Record<string, number>;
-  recentAssessments: Assessment[];
-}
-
-export default function Home() {
+export default function LandingPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'penilaian' | 'analisis'>('penilaian');
-  const [students, setStudents] = useState<Student[]>([]);
-  const [classes, setClasses] = useState<Class[]>([]);
-  const [teachers, setTeachers] = useState<Array<{ id: number; name: string }>>([]);
-  const [subjects, setSubjects] = useState<Array<{ id: number; name: string }>>([]);
-  const [assessments, setAssessments] = useState<Assessment[]>([]);
-  const [selectedAssessment, setSelectedAssessment] = useState<AssessmentDetail | null>(null);
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [showCreateAssessmentModal, setShowCreateAssessmentModal] = useState(false);
-  const [newAssessment, setNewAssessment] = useState({
-    class_id: '',
-    teacher_id: '',
-    subject_id: '',
-    topic: '',
-    assessment_date: new Date().toISOString().split('T')[0],
-    subtopics: [''] as string[],
-  });
-  const [showRatingModal, setShowRatingModal] = useState(false);
-  const [ratingModalStudent, setRatingModalStudent] = useState<any>(null);
-  const [subtopicsForRating, setSubtopicsForRating] = useState<Array<{ id: number; name: string }>>([]);
-  const [subtopicRatings, setSubtopicRatings] = useState<Record<number, string | null>>({});
-  const [currentUser, setCurrentUser] = useState<string>('');
-  const [showEditAssessmentModal, setShowEditAssessmentModal] = useState(false);
-  const [editingAssessment, setEditingAssessment] = useState<any>(null);
+  const { status } = useSession();
 
+  // Signed-in visitors don't need the marketing page — send them to the app.
   useEffect(() => {
-    // Check authentication
-    const token = localStorage.getItem('authToken');
-    const user = localStorage.getItem('user');
-    
-    if (!token) {
-      router.push('/login');
-      return;
+    if (status === 'authenticated') {
+      router.replace('/dashboard');
     }
-    
-    if (user) {
-      setCurrentUser(user);
-    }
-    loadClasses();
-    loadStudents();
-    loadTeachers();
-    loadSubjects();
-    if (activeTab === 'penilaian') {
-      loadAssessments();
-    } else {
-      // Clear selected assessment when switching away from penilaian tab
-      setSelectedAssessment(null);
-    }
-    if (activeTab === 'analisis') {
-      loadAnalytics();
-    }
-  }, [activeTab]);
-
-  const loadClasses = async () => {
-    try {
-      const response = await fetch('/api/classes');
-      const data = await response.json();
-      if (data.success) {
-        setClasses(data.data);
-      }
-    } catch (error) {
-      console.error('Error loading classes:', error);
-    }
-  };
-
-  const loadStudents = async () => {
-    try {
-      const response = await fetch('/api/students-new');
-      const data = await response.json();
-      if (data.success) {
-        setStudents(data.data);
-      }
-    } catch (error) {
-      console.error('Error loading students:', error);
-    }
-  };
-
-  const loadTeachers = async () => {
-    try {
-      const response = await fetch('/api/teachers');
-      const data = await response.json();
-      if (data.success) {
-        setTeachers(data.data);
-      }
-    } catch (error) {
-      console.error('Error loading teachers:', error);
-    }
-  };
-
-  const loadSubjects = async () => {
-    try {
-      const response = await fetch('/api/subjects');
-      const data = await response.json();
-      if (data.success) {
-        setSubjects(data.data);
-      }
-    } catch (error) {
-      console.error('Error loading subjects:', error);
-    }
-  };
-
-  const loadAssessments = async () => {
-    try {
-      setSelectedAssessment(null);
-      const response = await fetch('/api/assessments');
-      const data = await response.json();
-      if (data.success) {
-        setAssessments(data.data);
-      }
-    } catch (error) {
-      console.error('Error loading assessments:', error);
-    }
-  };
-
-  const loadAssessmentDetail = async (assessmentId: number) => {
-    try {
-      const response = await fetch(`/api/assessments/${assessmentId}`);
-      const data = await response.json();
-      if (data.success) {
-        // Calculate average ratings for students with subtopics
-        const assessmentData = data.data;
-        if (assessmentData.subtopics && assessmentData.subtopics.length > 0) {
-          assessmentData.students = assessmentData.students.map((student: any) => {
-            const ratings = student.ratings
-              .filter((r: any) => r.rating_type !== null)
-              .map((r: any) => r.rating_type);
-            
-            let averageRating = null;
-            if (ratings.length > 0) {
-              // Filter out TD values and extract numeric values from TP ratings
-              const ratingValues = ratings
-                .filter((r: string) => r !== 'TD')
-                .map((r: string) => {
-                  const match = r.match(/\d+/);
-                  return match ? parseInt(match[0]) : null;
-                })
-                .filter((v: number | null) => v !== null) as number[];
-              
-              if (ratingValues.length > 0) {
-                const average = ratingValues.reduce((a: number, b: number) => a + b, 0) / ratingValues.length;
-                
-                if (average >= 5.5) averageRating = 'TP6';
-                else if (average >= 4.5) averageRating = 'TP5';
-                else if (average >= 3.5) averageRating = 'TP4';
-                else if (average >= 2.5) averageRating = 'TP3';
-                else if (average >= 1.5) averageRating = 'TP2';
-                else averageRating = 'TP1';
-              } else {
-                // All ratings are TD
-                averageRating = 'TD';
-              }
-            }
-            
-            return { ...student, averageRating };
-          });
-        }
-        setSelectedAssessment(assessmentData);
-      }
-    } catch (error) {
-      console.error('Error loading assessment detail:', error);
-    }
-  };
-
-  const loadAnalytics = async () => {
-    try {
-      const response = await fetch('/api/analytics-new');
-      const data = await response.json();
-      if (data.success) {
-        setAnalytics(data.data);
-      }
-    } catch (error) {
-      console.error('Error loading analytics:', error);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('user');
-      router.push('/login');
-    } catch (error) {
-      console.error('Error logging out:', error);
-      // Still logout locally even if server request fails
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('user');
-      router.push('/login');
-    }
-  };
-
-  const handleCreateAssessment = async () => {
-    if (!newAssessment.class_id || !newAssessment.teacher_id || !newAssessment.subject_id || !newAssessment.assessment_date.trim()) {
-      alert('Sila lengkapkan semua maklumat');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Filter out empty subtopics
-      const filteredSubtopics = newAssessment.subtopics.filter(st => st.trim());
-
-      const response = await fetch('/api/assessments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          class_id: parseInt(newAssessment.class_id, 10),
-          teacher_id: parseInt(newAssessment.teacher_id, 10),
-          subject_id: parseInt(newAssessment.subject_id, 10),
-          topic: newAssessment.topic,
-          assessment_date: newAssessment.assessment_date,
-          subtopics: filteredSubtopics.length > 0 ? filteredSubtopics : null,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        alert('Penilaian berjaya dibuat');
-        setNewAssessment({
-          class_id: '',
-          teacher_id: '',
-          subject_id: '',
-          topic: '',
-          assessment_date: new Date().toISOString().split('T')[0],
-          subtopics: [''],
-        });
-        setShowCreateAssessmentModal(false);
-        loadAssessments();
-        loadAssessmentDetail(data.data.id);
-      } else {
-        alert('Gagal buat penilaian: ' + data.error);
-      }
-    } catch (error) {
-      console.error('Error creating assessment:', error);
-      alert('Gagal buat penilaian');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRatingClick = async (studentId: number, student: any) => {
-    if (!selectedAssessment) return;
-
-    // If there are subtopics, open modal for rating subtopics
-    if (selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0) {
-      setRatingModalStudent({ ...student, id: studentId });
-      setSubtopicsForRating(selectedAssessment.subtopics);
-      
-      // Initialize subtopic ratings from existing ratings
-      const ratings: Record<number, string | null> = {};
-      selectedAssessment.subtopics.forEach(subtopic => {
-        const studentRatings = student.ratings || [];
-        const subtopicRating = studentRatings.find((r: any) => r.subtopic_id === subtopic.id);
-        ratings[subtopic.id] = subtopicRating?.rating_type || null;
-      });
-      setSubtopicRatings(ratings);
-      setShowRatingModal(true);
-    }
-  };
-
-  const handleDirectRatingClick = async (studentId: number, ratingType: string, isCurrentlySelected: boolean) => {
-    if (!selectedAssessment) return;
-
-    try {
-      // If clicking the same button (currently selected), deselect it (set to NULL)
-      // If clicking a different button, select it
-      const newValue = isCurrentlySelected ? null : ratingType;
-      
-      const response = await fetch('/api/ratings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          student_id: studentId,
-          assessment_id: selectedAssessment.assessment.id,
-          subtopic_id: null,
-          rating_type: newValue,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        // Update UI - set the selected rating for this student
-        setSelectedAssessment(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            students: prev.students.map(student => {
-              if (student.id === studentId) {
-                return { 
-                  ...student, 
-                  ratings: [{ rating_type: newValue }],
-                };
-              }
-              return student;
-            }),
-          };
-        });
-      } else {
-        alert('Gagal kemaskini penilaian');
-      }
-    } catch (error) {
-      console.error('Error updating rating:', error);
-      alert('Gagal kemaskini penilaian');
-    }
-  };
-
-  const handleSubtopicRatingChange = (subtopicId: number, ratingType: string | null) => {
-    setSubtopicRatings(prev => ({
-      ...prev,
-      [subtopicId]: prev[subtopicId] === ratingType ? null : ratingType,
-    }));
-  };
-
-  const handleCloseRatingModal = async () => {
-    if (!selectedAssessment || !ratingModalStudent) return;
-
-    setLoading(true);
-    try {
-      // Save all subtopic ratings
-      for (const subtopicId of Object.keys(subtopicRatings)) {
-        const ratingType = subtopicRatings[parseInt(subtopicId)];
-        await fetch('/api/ratings', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            student_id: ratingModalStudent.id,
-            assessment_id: selectedAssessment.assessment.id,
-            subtopic_id: parseInt(subtopicId),
-            rating_type: ratingType,
-          }),
-        });
-      }
-
-      // Calculate average rating
-      const ratings = Object.values(subtopicRatings).filter((r) => r !== null) as string[];
-      let averageRating = null;
-      if (ratings.length > 0) {
-        // Filter out TD values and extract numeric values from TP ratings
-        const ratingValues = ratings
-          .filter(r => r !== 'TD')
-          .map(r => {
-            const match = r.match(/\d+/);
-            return match ? parseInt(match[0]) : null;
-          })
-          .filter((v: number | null) => v !== null) as number[];
-        
-        if (ratingValues.length > 0) {
-          const average = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
-          
-          if (average >= 5.5) averageRating = 'TP6';
-          else if (average >= 4.5) averageRating = 'TP5';
-          else if (average >= 3.5) averageRating = 'TP4';
-          else if (average >= 2.5) averageRating = 'TP3';
-          else if (average >= 1.5) averageRating = 'TP2';
-          else averageRating = 'TP1';
-        } else {
-          // All ratings are TD
-          averageRating = 'TD';
-        }
-      }
-
-      // Update the student's ratings in the UI
-      setSelectedAssessment(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          students: prev.students.map(s => {
-            if (s.id === ratingModalStudent.id) {
-              // Update with the new subtopic ratings
-              const updatedRatings = selectedAssessment.subtopics.map(subtopic => ({
-                subtopic_id: subtopic.id,
-                rating_type: subtopicRatings[subtopic.id] || null,
-              }));
-              
-              return {
-                ...s,
-                ratings: updatedRatings,
-                averageRating,
-              };
-            }
-            return s;
-          }),
-        };
-      });
-
-      setShowRatingModal(false);
-      setRatingModalStudent(null);
-      setSubtopicRatings({});
-    } catch (error) {
-      console.error('Error saving ratings:', error);
-      alert('Gagal menyimpan penilaian');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-
-
-  const exportAssessment = async (assessmentId: number, format: 'pdf' | 'csv') => {
-    try {
-      if (format === 'pdf') {
-        // Generate PDF using html2canvas for proper Arabic/Jawi font support
-        // Create a hidden container with the assessment table
-        const container = document.createElement('div');
-        container.style.position = 'absolute';
-        container.style.left = '-9999px';
-        container.style.top = '0';
-        container.style.width = '1200px';
-        container.style.background = 'white';
-        container.style.padding = '40px';
-        container.style.fontFamily = 'Arial, sans-serif';
-
-        // Get subtopics
-        const subtopics = selectedAssessment?.subtopics || [];
-        const hasSubtopics = subtopics.length > 0;
-
-        // Build HTML content
-        let htmlContent = `
-          <div style="font-family: Arial, 'Noto Sans Arabic', sans-serif;">
-            <h1 style="text-align: center; font-size: 24px; margin-bottom: 20px; font-weight: bold;">
-              REKOD PERKEMBANGAN MURID
-            </h1>
-            <div style="margin-bottom: 20px; font-size: 14px; line-height: 1.8;">
-              <p><strong>Kelas:</strong> ${selectedAssessment?.assessment.class_name}</p>
-              <p><strong>Guru:</strong> ${selectedAssessment?.assessment.teacher_name || 'Tidak Ditentukan'}</p>
-              <p><strong>Subjek:</strong> ${selectedAssessment?.assessment.subject_name || 'Tidak Ditentukan'}</p>
-              ${selectedAssessment?.assessment.topic ? `<p><strong>Topik:</strong> ${selectedAssessment.assessment.topic}</p>` : ''}
-              <p><strong>Tarikh:</strong> ${new Date(selectedAssessment?.assessment.assessment_date!).toLocaleDateString('ms-MY')}</p>
-            </div>`;
-
-        // Legend for subtopics
-        if (hasSubtopics && subtopics.length > 0) {
-          htmlContent += `
-            <div style="margin-bottom: 20px; padding: 15px; background: #f3f4f6; border-radius: 8px;">
-              <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 10px;">Standard Pembelajaran:</h3>
-              <div style="font-size: 12px; line-height: 1.6;">`;
-          
-          subtopics.forEach((st: any, idx: number) => {
-            htmlContent += `<p style="margin: 4px 0;"><strong>SP${idx + 1}:</strong> ${st.name}</p>`;
-          });
-          
-          htmlContent += `
-              </div>
-            </div>`;
-        }
-
-        // Table
-        htmlContent += `
-          <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 20px;">
-            <thead>
-              <tr style="background: #e5e7eb;">
-                <th style="border: 1px solid #d1d5db; padding: 10px; text-align: left; font-weight: bold;">BIL</th>
-                <th style="border: 1px solid #d1d5db; padding: 10px; text-align: left; font-weight: bold;">NAMA MURID</th>`;
-        
-        if (hasSubtopics) {
-          subtopics.forEach((st: any, idx: number) => {
-            htmlContent += `<th style="border: 1px solid #d1d5db; padding: 10px; text-align: center; font-weight: bold;">SP${idx + 1}</th>`;
-          });
-        }
-        
-        htmlContent += `
-                <th style="border: 1px solid #d1d5db; padding: 10px; text-align: center; font-weight: bold;">PURATA</th>
-              </tr>
-            </thead>
-            <tbody>`;
-
-        // TP Colors mapping
-        const tpColors: { [key: string]: string } = {
-          'TP1': '#dc2626',
-          'TP2': '#f97316',
-          'TP3': '#facc15',
-          'TP4': '#84cc16',
-          'TP5': '#22c55e',
-          'TP6': '#3b82f6',
-          'TD': '#9ca3af',
-        };
-
-        // Student rows
-        selectedAssessment?.students.forEach((student, index) => {
-          htmlContent += `
-            <tr>
-              <td style="border: 1px solid #d1d5db; padding: 8px;">${index + 1}</td>
-              <td style="border: 1px solid #d1d5db; padding: 8px;">${student.name}</td>`;
-          
-          if (hasSubtopics) {
-            subtopics.forEach((subtopic: any) => {
-              const rating = student.ratings?.find((r: any) => r.subtopic_id === subtopic.id);
-              const ratingText = rating?.rating_type || 'TD';
-              const bgColor = tpColors[ratingText] || '#ffffff';
-              
-              htmlContent += `
-                <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${bgColor}; color: white; font-weight: bold;">
-                  ${ratingText}
-                </td>`;
-            });
-          }
-          
-          const avgRating = student.averageRating || (student.ratings && student.ratings.length > 0 && !hasSubtopics ? student.ratings[0].rating_type : null) || 'Belum dinilai';
-          const avgColor = tpColors[avgRating] || '#ffffff';
-          const textColor = avgRating !== 'Belum dinilai' ? 'white' : '#6b7280';
-          const fontWeight = avgRating !== 'Belum dinilai' ? 'bold' : 'normal';
-          
-          htmlContent += `
-              <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${avgColor}; color: ${textColor}; font-weight: ${fontWeight};">
-                ${avgRating}
-              </td>
-            </tr>`;
-        });
-
-        htmlContent += `
-            </tbody>
-          </table>
-          <div style="margin-top: 30px; text-align: center; font-size: 11px; color: #6b7280; font-style: italic;">
-            Dijana pada: ${new Date().toLocaleString('ms-MY')}
-          </div>
-        </div>`;
-
-        container.innerHTML = htmlContent;
-        document.body.appendChild(container);
-
-        try {
-          // Render to canvas with high quality
-          const canvas = await html2canvas(container, {
-            scale: 2,
-            useCORS: true,
-            logging: false,
-            backgroundColor: '#ffffff'
-          });
-
-          // Calculate PDF dimensions
-          const imgWidth = 210; // A4 width in mm
-          const imgHeight = (canvas.height * imgWidth) / canvas.width;
-          
-          // Create PDF
-          const pdf = new jsPDF({
-            orientation: imgHeight > 297 ? 'portrait' : 'portrait',
-            unit: 'mm',
-            format: 'a4'
-          });
-
-          let heightLeft = imgHeight;
-          let position = 0;
-          const pageHeight = 297; // A4 height in mm
-
-          // Add image to PDF (split into pages if needed)
-          pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
-          heightLeft -= pageHeight;
-
-          while (heightLeft > 0) {
-            position = heightLeft - imgHeight;
-            pdf.addPage();
-            pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
-            heightLeft -= pageHeight;
-          }
-
-          pdf.save(`penilaian-${selectedAssessment?.assessment.class_name}-${new Date().toISOString().split('T')[0]}.pdf`);
-        } finally {
-          // Clean up
-          document.body.removeChild(container);
-        }
-      } else if (format === 'csv') {
-        // Export as CSV
-        const endpoint = `/api/assessments/${assessmentId}/export/pdf`; // PDF endpoint returns CSV
-        fetch(endpoint)
-          .then(response => {
-            if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.blob();
-          })
-          .then(blob => {
-            const url = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.setAttribute('download', `penilaian-${selectedAssessment?.assessment.class_name}-${new Date().toISOString().split('T')[0]}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(link);
-          })
-          .catch(error => {
-            console.error('Error exporting CSV:', error);
-            alert('Gagal mengeksport CSV: ' + error.message);
-          });
-      }
-    } catch (error) {
-      console.error('Error exporting assessment:', error);
-      alert('Gagal mengeksport penilaian');
-    }
-  };
-
-  const handleDeleteAssessment = async (assessmentId: number) => {
-    if (!confirm('Anda pasti ingin padam penilaian ini? Tindakan ini tidak boleh dibuat asal.')) {
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/assessments/${assessmentId}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        alert('Penilaian berjaya dipadamkan');
-        setSelectedAssessment(null);
-        loadAssessments();
-      } else {
-        alert('Gagal padam: ' + data.error);
-      }
-    } catch (error) {
-      console.error('Error deleting assessment:', error);
-      alert('Gagal padam penilaian');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleOpenEditAssessment = () => {
-    if (!selectedAssessment) return;
-    
-    const currentSubtopics = selectedAssessment.subtopics || [];
-    
-    setEditingAssessment({
-      id: selectedAssessment.assessment.id,
-      teacher_id: selectedAssessment.assessment.teacher_id?.toString() || '',
-      subject_id: selectedAssessment.assessment.subject_id?.toString() || '',
-      topic: selectedAssessment.assessment.topic || '',
-      assessment_date: selectedAssessment.assessment.assessment_date,
-      subtopics: currentSubtopics.map((st: any) => ({ id: st.id, name: st.name })),
-      newSubtopics: [] as string[],
-      deletedSubtopicIds: [] as number[],
-    });
-    setShowEditAssessmentModal(true);
-  };
-
-  const handleSaveEditAssessment = async () => {
-    if (!editingAssessment || !editingAssessment.teacher_id || !editingAssessment.subject_id || !editingAssessment.assessment_date) {
-      alert('Sila lengkapkan semua maklumat');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Update basic assessment info
-      const response = await fetch(`/api/assessments/${editingAssessment.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          teacher_id: parseInt(editingAssessment.teacher_id, 10),
-          subject_id: parseInt(editingAssessment.subject_id, 10),
-          topic: editingAssessment.topic,
-          assessment_date: editingAssessment.assessment_date,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        // Handle subtopic deletions
-        if (editingAssessment.deletedSubtopicIds && editingAssessment.deletedSubtopicIds.length > 0) {
-          for (const subtopicId of editingAssessment.deletedSubtopicIds) {
-            await fetch(`/api/subtopics?id=${subtopicId}`, { method: 'DELETE' });
-          }
-        }
-
-        // Handle subtopic name updates
-        if (editingAssessment.subtopics) {
-          for (const subtopic of editingAssessment.subtopics) {
-            await fetch(`/api/subtopics/${subtopic.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: subtopic.name }),
-            });
-          }
-        }
-
-        // Handle new subtopics
-        if (editingAssessment.newSubtopics && editingAssessment.newSubtopics.length > 0) {
-          for (const subtopicName of editingAssessment.newSubtopics) {
-            if (subtopicName.trim()) {
-              await fetch('/api/subtopics', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  assessment_id: editingAssessment.id,
-                  name: subtopicName.trim(),
-                }),
-              });
-            }
-          }
-        }
-
-        alert('Penilaian berjaya dikemaskini');
-        setShowEditAssessmentModal(false);
-        setEditingAssessment(null);
-        loadAssessments();
-        loadAssessmentDetail(data.data.id);
-      } else {
-        alert('Gagal kemaskini: ' + data.error);
-      }
-    } catch (error) {
-      console.error('Error updating assessment:', error);
-      alert('Gagal kemaskini penilaian');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-
+  }, [status, router]);
 
   return (
-    <div className="app-container">
-      <div className="header">
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '1.5rem',
-          marginBottom: '1rem'
-        }}>
-          <img 
-            src="/logo.png" 
-            alt="SK Taman Jasmin Logo" 
-            style={{
-              width: '80px',
-              height: '80px',
-              objectFit: 'contain'
-            }}
-          />
+    <div className="landing">
+      <header className="nav">
+        <div className="brand">
+          <img src="/logo.png" alt="Logo" />
           <div>
-            <h2 style={{
-              fontSize: '1.5rem',
-              fontWeight: '700',
-              color: 'var(--primary)',
-              margin: '0 0 0.25rem 0'
-            }}>
-              Sekolah Kebangsaan Taman Jasmin
-            </h2>
-            <h1>📚 Sistem Pengurusan Penilaian Murid</h1>
+            <strong>Sistem Penilaian Murid</strong>
+            <span>SK Taman Jasmin</span>
           </div>
         </div>
-        <div className="header-actions">
-          <button onClick={() => router.push('/admin')} className="btn btn-secondary" style={{ marginRight: '10px' }}>
-            ⚙️ Admin
+        <div className="nav-actions">
+          <button className="link-btn" onClick={() => signIn('google', { callbackUrl: '/dashboard' })}>
+            Log Masuk
           </button>
-          <div className="user-info">
-            <span>👤 {currentUser}</span>
-            <button onClick={handleLogout} className="logout-btn">
-              🚪 Keluar
-            </button>
-          </div>
-        </div>
-        <div className="nav-tabs">
-          <button
-            className={`nav-tab ${activeTab === 'penilaian' ? 'active' : ''}`}
-            onClick={() => setActiveTab('penilaian')}
-          >
-            ⭐ Tambah Penilaian
-          </button>
-          <button
-            className={`nav-tab ${activeTab === 'analisis' ? 'active' : ''}`}
-            onClick={() => setActiveTab('analisis')}
-          >
-            📊 Analisis
+          <button className="cta-btn" onClick={() => router.push('/subscribe')}>
+            Langgan Sekarang
           </button>
         </div>
-      </div>
+      </header>
 
-      <div className="main-content">
-        {/* Page: Add Ratings */}
-        {activeTab === 'penilaian' && (
-          <div>
-            <div className="filters-section">
-              <div className="form-group">
-                <label>Pilih Penilaian *</label>
-                <select
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      loadAssessmentDetail(parseInt(e.target.value));
-                    } else {
-                      setSelectedAssessment(null);
-                    }
-                  }}
-                >
-                  <option value="">-- Pilih Penilaian --</option>
-                  {assessments.map(a => (
-                    <option key={a.id} value={a.id}>
-                      {a.class_name} - {a.teacher_name} - {a.subject_name}{a.topic ? ` - ${a.topic}` : ''} ({new Date(a.assessment_date).toLocaleDateString('ms-MY')})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="action-buttons">
-              <button className="btn btn-primary" onClick={() => setShowCreateAssessmentModal(true)}>
-                ➕ Buat Penilaian Baru
-              </button>
-            </div>
-
-            {selectedAssessment ? (
-              <div>
-                <div style={{ marginBottom: '20px', padding: '15px', background: '#f0f9ff', borderRadius: '8px' }}>
-                  <h3 style={{ textTransform: 'uppercase' }}>{selectedAssessment.assessment.class_name}</h3>
-                  <p style={{ textTransform: 'uppercase' }}><strong>GURU:</strong> {selectedAssessment.assessment.teacher_name}</p>
-                  <p style={{ textTransform: 'uppercase' }}><strong>SUBJEK:</strong> {selectedAssessment.assessment.subject_name}</p>
-                  {selectedAssessment.assessment.topic && <p style={{ textTransform: 'uppercase' }}><strong>TOPIK:</strong> {selectedAssessment.assessment.topic}</p>}
-                  <p style={{ textTransform: 'uppercase' }}><strong>TARIKH:</strong> {new Date(selectedAssessment.assessment.assessment_date).toLocaleDateString('ms-MY')}</p>
-                  {selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0 && (
-                    <div style={{ marginTop: '10px' }}>
-                      <p style={{ marginBottom: '5px', textTransform: 'uppercase' }}><strong>STANDARD PEMBELAJARAN:</strong></p>
-                      <ul style={{ marginLeft: '20px', marginTop: '5px' }}>
-                        {selectedAssessment.subtopics.map((subtopic: any, idx: number) => (
-                          <li key={subtopic.id} style={{ textTransform: 'uppercase' }}>SP{idx + 1}: {subtopic.name}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => handleOpenEditAssessment()}
-                      style={{ padding: '8px 16px', fontSize: '14px' }}
-                    >
-                      ✏️ Edit
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => exportAssessment(selectedAssessment.assessment.id, 'pdf')}
-                      style={{ padding: '8px 16px', fontSize: '14px' }}
-                    >
-                      📄 Export PDF
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => exportAssessment(selectedAssessment.assessment.id, 'csv')}
-                      style={{ padding: '8px 16px', fontSize: '14px' }}
-                    >
-                      📊 Export CSV
-                    </button>
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => handleDeleteAssessment(selectedAssessment.assessment.id)}
-                      style={{ padding: '8px 16px', fontSize: '14px', marginLeft: 'auto' }}
-                    >
-                      🗑️ Padam Penilaian
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="students-table">
-                    <thead>
-                      <tr>
-                        <th>BIL</th>
-                        <th>NAMA MURID</th>
-                        <th style={{ minWidth: '500px' }}>TAHAP PENGUASAAN KESULURUHAN</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedAssessment.students.map((student, index) => {
-                        const hasSubtopics = selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0;
-                        return (
-                          <tr key={student.id}>
-                            <td>{index + 1}</td>
-                            <td><strong>{student.name}</strong></td>
-                            <td>
-                              {hasSubtopics ? (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  <button
-                                    className="btn btn-primary"
-                                    onClick={() => handleRatingClick(student.id, student)}
-                                    style={{ padding: '6px 12px', fontSize: '12px' }}
-                                  >
-                                    📝 Nilai
-                                  </button>
-                                  <div className="tp-buttons">
-                                    {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => {
-                                      const isAverage = student.averageRating === tp;
-                                      return (
-                                        <button
-                                          key={tp}
-                                          className={`tp-btn ${tp.toLowerCase()} ${isAverage ? 'selected' : ''}`}
-                                          style={{ cursor: 'default', pointerEvents: 'none' }}
-                                        >
-                                          {tp}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="tp-buttons">
-                                  {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => {
-                                    const isSelected = student.ratings && student.ratings.length > 0 && student.ratings[0].rating_type === tp;
-                                    return (
-                                      <button
-                                        key={tp}
-                                        className={`tp-btn ${tp.toLowerCase()} ${isSelected ? 'selected' : ''}`}
-                                        onClick={() => handleDirectRatingClick(student.id, tp, isSelected)}
-                                      >
-                                        {tp}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className="empty-state">
-                <h3>Sila pilih penilaian untuk mula</h3>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Page 3: Analytics */}
-        {activeTab === 'analisis' && analytics && (
-          <div>
-            <div className="stats-grid">
-              <div className="stat-card" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                <h3>Jumlah Murid</h3>
-                <div className="value">{analytics.totalStudents}</div>
-              </div>
-              <div className="stat-card" style={{ background: 'linear-gradient(135deg, #f093fb, #f5576c)' }}>
-                <h3>Penilaian Dibuat</h3>
-                <div className="value">{analytics.totalAssessments}</div>
-              </div>
-              <div className="stat-card" style={{ background: 'linear-gradient(135deg, #4facfe, #00f2fe)' }}>
-                <h3>Kelas</h3>
-                <div className="value">{analytics.uniqueClasses}</div>
-              </div>
-              <div className="stat-card" style={{ background: 'linear-gradient(135deg, #43e97b, #38f9d7)' }}>
-                <h3>Guru</h3>
-                <div className="value">{analytics.uniqueTeachers}</div>
-              </div>
-            </div>
-
-            <div className="chart-container">
-              <h3>📚 Murid Mengikut Kelas</h3>
-              <div className="bar-chart">
-                {Object.entries(analytics.byClass).map(([className, count]) => {
-                  const maxValue = Math.max(...Object.values(analytics.byClass), 1);
-                  return (
-                    <div key={className} className="bar-item">
-                      <div className="bar" style={{ height: `${(count / maxValue) * 100}%` }}>
-                        <div className="bar-value">{count}</div>
-                      </div>
-                      <div className="bar-label">{className}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="chart-container">
-              <h3>👨‍🏫 Penilaian Mengikut Guru</h3>
-              <div className="bar-chart">
-                {Object.entries(analytics.byTeacher).map(([teacher, count]) => {
-                  const maxValue = Math.max(...Object.values(analytics.byTeacher), 1);
-                  return (
-                    <div key={teacher} className="bar-item">
-                      <div className="bar" style={{ height: `${(count / maxValue) * 100}%` }}>
-                        <div className="bar-value">{count}</div>
-                      </div>
-                      <div className="bar-label">{teacher}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Modal: Create Assessment */}
-      {showCreateAssessmentModal && (
-        <div className="modal-overlay" onClick={() => setShowCreateAssessmentModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '90vh', overflowY: 'auto' }}>
-            <h2>Buat Penilaian Baru</h2>
-            <div className="form-group">
-              <label>Kelas *</label>
-              <select
-                value={newAssessment.class_id}
-                onChange={(e) => setNewAssessment({ ...newAssessment, class_id: e.target.value })}
-              >
-                <option value="">-- Pilih Kelas --</option>
-                {classes.map(cls => (
-                  <option key={cls.id} value={cls.id}>
-                    {cls.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Nama Guru *</label>
-              <select
-                value={newAssessment.teacher_id}
-                onChange={(e) => setNewAssessment({ ...newAssessment, teacher_id: e.target.value })}
-              >
-                <option value="">-- Pilih Guru --</option>
-                {teachers.map(teacher => (
-                  <option key={teacher.id} value={teacher.id}>
-                    {teacher.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Subjek *</label>
-              <select
-                value={newAssessment.subject_id}
-                onChange={(e) => setNewAssessment({ ...newAssessment, subject_id: e.target.value })}
-              >
-                <option value="">-- Pilih Subjek --</option>
-                {subjects.map(subject => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Topik</label>
-              <input
-                type="text"
-                placeholder="Masukkan topik..."
-                value={newAssessment.topic}
-                onChange={(e) => setNewAssessment({ ...newAssessment, topic: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label>Tarikh *</label>
-              <input
-                type="date"
-                value={newAssessment.assessment_date}
-                onChange={(e) => setNewAssessment({ ...newAssessment, assessment_date: e.target.value })}
-              />
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <label style={{ fontWeight: 'bold' }}>Standard Pembelajaran</label>
-                <button
-                  className="btn btn-sm btn-outline"
-                  onClick={() => setNewAssessment({ ...newAssessment, subtopics: [...newAssessment.subtopics, ''] })}
-                  style={{ padding: '4px 8px', fontSize: '12px' }}
-                >
-                  ➕ Tambah
-                </button>
-              </div>
-              {newAssessment.subtopics.map((subtopic, index) => (
-                <div key={index} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                  <input
-                    type="text"
-                    placeholder={`Standard Pembelajaran ${index + 1}...`}
-                    value={subtopic}
-                    onChange={(e) => {
-                      const newSubtopics = [...newAssessment.subtopics];
-                      newSubtopics[index] = e.target.value;
-                      setNewAssessment({ ...newAssessment, subtopics: newSubtopics });
-                    }}
-                    style={{ flex: 1 }}
-                  />
-                  {newAssessment.subtopics.length > 1 && (
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => {
-                        const newSubtopics = newAssessment.subtopics.filter((_, i) => i !== index);
-                        setNewAssessment({ ...newAssessment, subtopics: newSubtopics });
-                      }}
-                      style={{ padding: '6px 10px', fontSize: '12px' }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="modal-buttons">
-              <button className="btn btn-outline" onClick={() => setShowCreateAssessmentModal(false)} disabled={loading}>
-                Batal
-              </button>
-              <button className="btn btn-primary" onClick={handleCreateAssessment} disabled={loading}>
-                {loading ? 'Membuat...' : 'Buat Penilaian'}
-              </button>
-            </div>
-          </div>
+      <section className="hero">
+        <div className="hero-badge">✨ Platform Penilaian Murid Digital</div>
+        <h1>
+          Penilaian Tahap Penguasaan Murid,<br />
+          <span className="grad">Mudah &amp; Pantas.</span>
+        </h1>
+        <p className="sub">
+          Rekod, analisis dan laporkan perkembangan murid mengikut Standard
+          Pembelajaran KSSR — semua dalam satu sistem mesra guru. Jimatkan masa,
+          fokus pada mengajar.
+        </p>
+        <div className="hero-actions">
+          <button className="cta-btn big" onClick={() => router.push('/subscribe')}>
+            Mula dengan RM10/bulan
+          </button>
+          <button className="ghost-btn big" onClick={() => signIn('google', { callbackUrl: '/dashboard' })}>
+            Saya sudah melanggan →
+          </button>
         </div>
-      )}
+        <div className="trust">Digunakan oleh guru untuk menilai ratusan murid setiap hari.</div>
+      </section>
 
-      {/* Modal: Edit Assessment */}
-      {showEditAssessmentModal && editingAssessment && (
-        <div className="modal-overlay" onClick={() => { if (!loading) setShowEditAssessmentModal(false); }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '90vh', overflowY: 'auto' }}>
-            <h2>Edit Penilaian</h2>
-            <div className="form-group">
-              <label>Nama Guru *</label>
-              <select
-                value={editingAssessment.teacher_id}
-                onChange={(e) => setEditingAssessment({ ...editingAssessment, teacher_id: e.target.value })}
-                disabled={loading}
-              >
-                <option value="">-- Pilih Guru --</option>
-                {teachers.map(teacher => (
-                  <option key={teacher.id} value={teacher.id}>
-                    {teacher.name}
-                  </option>
-                ))}
-              </select>
+      <section className="features" id="features">
+        <h2>Semua yang guru perlukan</h2>
+        <p className="section-sub">Direka khas untuk aliran kerja penilaian di sekolah rendah.</p>
+        <div className="feature-grid">
+          {FEATURES.map((f) => (
+            <div className="feature-card" key={f.title}>
+              <div className="feature-icon">{f.icon}</div>
+              <h3>{f.title}</h3>
+              <p>{f.desc}</p>
             </div>
-            <div className="form-group">
-              <label>Subjek *</label>
-              <select
-                value={editingAssessment.subject_id}
-                onChange={(e) => setEditingAssessment({ ...editingAssessment, subject_id: e.target.value })}
-                disabled={loading}
-              >
-                <option value="">-- Pilih Subjek --</option>
-                {subjects.map(subject => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Topik</label>
-              <input
-                type="text"
-                placeholder="Masukkan topik..."
-                value={editingAssessment.topic}
-                onChange={(e) => setEditingAssessment({ ...editingAssessment, topic: e.target.value })}
-                disabled={loading}
-              />
-            </div>
-            <div className="form-group">
-              <label>Tarikh *</label>
-              <input
-                type="date"
-                value={editingAssessment.assessment_date}
-                onChange={(e) => setEditingAssessment({ ...editingAssessment, assessment_date: e.target.value })}
-                disabled={loading}
-              />
-            </div>
-
-            {/* Existing Subtopics */}
-            {editingAssessment.subtopics && editingAssessment.subtopics.length > 0 && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>Standard Pembelajaran Sedia Ada</label>
-                {editingAssessment.subtopics.map((subtopic: any, index: number) => (
-                  <div key={subtopic.id} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                    <input
-                      type="text"
-                      placeholder={`Standard Pembelajaran ${index + 1}...`}
-                      value={subtopic.name}
-                      onChange={(e) => {
-                        const newSubtopics = [...editingAssessment.subtopics];
-                        newSubtopics[index] = { ...newSubtopics[index], name: e.target.value };
-                        setEditingAssessment({ ...editingAssessment, subtopics: newSubtopics });
-                      }}
-                      style={{ flex: 1 }}
-                      disabled={loading}
-                    />
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => {
-                        const newSubtopics = editingAssessment.subtopics.filter((_: any, i: number) => i !== index);
-                        const deletedIds = [...(editingAssessment.deletedSubtopicIds || []), subtopic.id];
-                        setEditingAssessment({ 
-                          ...editingAssessment, 
-                          subtopics: newSubtopics,
-                          deletedSubtopicIds: deletedIds
-                        });
-                      }}
-                      style={{ padding: '6px 10px', fontSize: '12px' }}
-                      disabled={loading}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* New Subtopics */}
-            <div style={{ marginBottom: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <label style={{ fontWeight: 'bold' }}>Tambah Standard Pembelajaran Baru</label>
-                <button
-                  className="btn btn-sm btn-outline"
-                  onClick={() => {
-                    const newSubtopics = [...(editingAssessment.newSubtopics || []), ''];
-                    setEditingAssessment({ ...editingAssessment, newSubtopics });
-                  }}
-                  style={{ padding: '4px 8px', fontSize: '12px' }}
-                  disabled={loading}
-                >
-                  ➕ Tambah
-                </button>
-              </div>
-              {editingAssessment.newSubtopics && editingAssessment.newSubtopics.map((subtopic: string, index: number) => (
-                <div key={index} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                  <input
-                    type="text"
-                    placeholder={`Standard Pembelajaran baru ${index + 1}...`}
-                    value={subtopic}
-                    onChange={(e) => {
-                      const newSubtopics = [...editingAssessment.newSubtopics];
-                      newSubtopics[index] = e.target.value;
-                      setEditingAssessment({ ...editingAssessment, newSubtopics });
-                    }}
-                    style={{ flex: 1 }}
-                    disabled={loading}
-                  />
-                  <button
-                    className="btn btn-sm btn-danger"
-                    onClick={() => {
-                      const newSubtopics = editingAssessment.newSubtopics.filter((_: string, i: number) => i !== index);
-                      setEditingAssessment({ ...editingAssessment, newSubtopics });
-                    }}
-                    style={{ padding: '6px 10px', fontSize: '12px' }}
-                    disabled={loading}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div className="modal-buttons">
-              <button 
-                className="btn btn-outline" 
-                onClick={() => { setShowEditAssessmentModal(false); setEditingAssessment(null); }}
-                disabled={loading}
-              >
-                Batal
-              </button>
-              <button className="btn btn-primary" onClick={handleSaveEditAssessment} disabled={loading}>
-                {loading ? 'Menyimpan...' : 'Simpan'}
-              </button>
-            </div>
-          </div>
+          ))}
         </div>
-      )}
+      </section>
 
-      {/* Modal: Rating with Subtopics */}
-      {showRatingModal && ratingModalStudent && (
-        <div className="modal-overlay" onClick={() => { if (!loading) setShowRatingModal(false); }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
-            <h2>Nilai {ratingModalStudent.name}</h2>
-            <p style={{ marginBottom: '20px', fontSize: '14px', color: '#666' }}>
-              Sila pilih tahap penguasaan untuk setiap standard pembelajaran
-            </p>
-
-            {subtopicsForRating.map(subtopic => (
-              <div key={subtopic.id} style={{ marginBottom: '20px', padding: '15px', background: '#f9f9f9', borderRadius: '8px' }}>
-                <p style={{ marginBottom: '10px', fontWeight: 'bold' }}>{subtopic.name}</p>
-                <div className="tp-buttons-container" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                  {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => (
-                    <button
-                      key={tp}
-                      className={`tp-btn ${tp.toLowerCase()} ${subtopicRatings[subtopic.id] === tp ? 'selected' : ''}`}
-                      onClick={() => handleSubtopicRatingChange(subtopic.id, tp)}
-                      disabled={loading}
-                      style={{ padding: '8px 12px', fontSize: '12px' }}
-                    >
-                      {tp}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            <div className="modal-buttons">
-              <button 
-                className="btn btn-outline" 
-                onClick={() => { setShowRatingModal(false); setRatingModalStudent(null); }}
-                disabled={loading}
-              >
-                Batal
-              </button>
-              <button 
-                className="btn btn-primary" 
-                onClick={handleCloseRatingModal} 
-                disabled={loading}
-              >
-                {loading ? 'Menyimpan...' : 'Simpan Penilaian'}
-              </button>
-            </div>
+      <section className="pricing" id="pricing">
+        <h2>Harga mudah, tiada kontrak</h2>
+        <p className="section-sub">Satu pelan, semua ciri. Batalkan bila-bila masa.</p>
+        <div className="price-card">
+          <div className="price-tag">
+            <span className="currency">RM</span>
+            <span className="amount">10</span>
+            <span className="period">/ bulan</span>
           </div>
+          <ul className="price-list">
+            <li>✅ Penilaian TP tanpa had</li>
+            <li>✅ Murid, kelas, guru &amp; subjek tanpa had</li>
+            <li>✅ Analisis &amp; carta automatik</li>
+            <li>✅ Eksport PDF &amp; CSV</li>
+            <li>✅ Import murid melalui CSV</li>
+            <li>✅ Log masuk selamat dengan Google</li>
+          </ul>
+          <button className="cta-btn big full" onClick={() => router.push('/subscribe')}>
+            Langgan melalui DuitNow QR
+          </button>
+          <p className="pay-note">Bayaran mudah &amp; selamat menerusi DuitNow QR (perbankan Malaysia).</p>
         </div>
-      )}
+      </section>
+
+      <section className="how">
+        <h2>Bermula dalam 3 langkah</h2>
+        <div className="steps">
+          <div className="step"><span>1</span><p>Imbas DuitNow QR &amp; bayar RM10 melalui aplikasi bank anda.</p></div>
+          <div className="step"><span>2</span><p>Muat naik resit &amp; masukkan email Google anda.</p></div>
+          <div className="step"><span>3</span><p>Kami aktifkan akaun anda — terus log masuk &amp; mula menilai.</p></div>
+        </div>
+        <button className="cta-btn big" onClick={() => router.push('/subscribe')}>
+          Langgan Sekarang
+        </button>
+      </section>
+
+      <footer className="foot">
+        <img src="/logo.png" alt="Logo" />
+        <p>Sistem Pengurusan Penilaian Murid — SK Taman Jasmin</p>
+        <p className="muted">© {new Date().getFullYear()} · Semua hak terpelihara.</p>
+      </footer>
+
+      <style jsx>{`
+        .landing {
+          font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          color: #1e293b;
+          background: #f8fafc;
+        }
+        .nav {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 6vw;
+          position: sticky;
+          top: 0;
+          background: rgba(255, 255, 255, 0.85);
+          backdrop-filter: saturate(180%) blur(12px);
+          border-bottom: 1px solid #eef1f6;
+          z-index: 10;
+        }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand img { width: 44px; height: 44px; object-fit: contain; }
+        .brand strong { display: block; font-size: 15px; }
+        .brand span { font-size: 12px; color: #64748b; }
+        .nav-actions { display: flex; align-items: center; gap: 12px; }
+        .link-btn {
+          background: none; border: none; cursor: pointer;
+          font-weight: 600; color: #475569; font-size: 15px; font-family: inherit;
+        }
+        .cta-btn {
+          background: linear-gradient(120deg, #4f46e5, #6366f1);
+          color: white; border: none; border-radius: 10px;
+          padding: 10px 18px; font-weight: 700; font-size: 15px;
+          cursor: pointer; font-family: inherit;
+          box-shadow: 0 8px 20px rgba(79, 70, 229, 0.25);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .cta-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 26px rgba(79,70,229,0.32); }
+        .cta-btn.big { padding: 15px 28px; font-size: 17px; }
+        .cta-btn.full { width: 100%; }
+        .ghost-btn {
+          background: white; color: #4f46e5; border: 1.5px solid #dfe2ee;
+          border-radius: 10px; padding: 15px 24px; font-weight: 700; font-size: 17px;
+          cursor: pointer; font-family: inherit;
+        }
+        .ghost-btn:hover { border-color: #b9c0e0; }
+        .hero {
+          text-align: center;
+          padding: 80px 6vw 70px;
+          background:
+            radial-gradient(1200px 500px at 50% -10%, rgba(99,102,241,0.16), transparent 70%),
+            linear-gradient(180deg, #ffffff, #f8fafc);
+        }
+        .hero-badge {
+          display: inline-block; background: #eef2ff; color: #4f46e5;
+          padding: 7px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+          margin-bottom: 22px;
+        }
+        .hero h1 { font-size: clamp(30px, 5vw, 52px); line-height: 1.1; margin: 0 0 18px; font-weight: 800; letter-spacing: -0.02em; }
+        .grad {
+          background: linear-gradient(120deg, #4f46e5, #6366f1, #14b8a6);
+          -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .sub { max-width: 640px; margin: 0 auto 32px; font-size: 18px; color: #475569; line-height: 1.6; }
+        .hero-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+        .trust { margin-top: 26px; font-size: 13px; color: #94a3b8; }
+        .features, .pricing, .how { padding: 70px 6vw; max-width: 1100px; margin: 0 auto; text-align: center; }
+        .features h2, .pricing h2, .how h2 { font-size: clamp(24px, 3.5vw, 34px); font-weight: 800; margin: 0 0 8px; }
+        .section-sub { color: #64748b; margin: 0 0 42px; font-size: 16px; }
+        .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 22px; text-align: left; }
+        .feature-card {
+          background: white; border: 1px solid #eef1f6; border-radius: 16px; padding: 26px;
+          box-shadow: 0 4px 14px rgba(15,23,42,0.04);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .feature-card:hover { transform: translateY(-4px); box-shadow: 0 14px 30px rgba(15,23,42,0.08); }
+        .feature-icon { font-size: 30px; margin-bottom: 12px; }
+        .feature-card h3 { margin: 0 0 8px; font-size: 18px; }
+        .feature-card p { margin: 0; color: #64748b; line-height: 1.55; font-size: 14.5px; }
+        .pricing { background: linear-gradient(180deg, #f8fafc, #eef2ff); border-radius: 28px; }
+        .price-card {
+          background: white; border-radius: 22px; max-width: 440px; margin: 0 auto;
+          padding: 40px 34px; box-shadow: 0 24px 60px rgba(79,70,229,0.14); border: 1px solid #e7eaf6;
+        }
+        .price-tag { display: flex; align-items: baseline; justify-content: center; gap: 4px; margin-bottom: 24px; }
+        .currency { font-size: 24px; font-weight: 700; color: #4f46e5; }
+        .amount { font-size: 64px; font-weight: 800; letter-spacing: -0.03em; }
+        .period { font-size: 18px; color: #94a3b8; }
+        .price-list { list-style: none; padding: 0; margin: 0 0 28px; text-align: left; }
+        .price-list li { padding: 9px 0; border-bottom: 1px dashed #eef1f6; font-size: 15px; color: #334155; }
+        .pay-note { margin: 14px 0 0; font-size: 12.5px; color: #94a3b8; }
+        .how .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-bottom: 36px; }
+        .step { background: white; border: 1px solid #eef1f6; border-radius: 16px; padding: 26px; text-align: center; }
+        .step span {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 40px; height: 40px; border-radius: 50%; margin-bottom: 14px;
+          background: linear-gradient(120deg, #4f46e5, #6366f1); color: white; font-weight: 800;
+        }
+        .step p { margin: 0; color: #475569; line-height: 1.5; }
+        .foot { text-align: center; padding: 46px 6vw; border-top: 1px solid #eef1f6; background: white; }
+        .foot img { width: 46px; height: 46px; object-fit: contain; margin-bottom: 10px; }
+        .foot p { margin: 4px 0; color: #475569; font-weight: 600; }
+        .foot .muted { color: #94a3b8; font-weight: 400; font-size: 13px; }
+      `}</style>
     </div>
   );
 }

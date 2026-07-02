@@ -1,11 +1,28 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { getCurrentUser, type CurrentUser } from '@/lib/auth';
+
+// Returns null when the assessment exists and the user may access it; otherwise
+// returns the NextResponse to send back (404/401).
+async function assertAssessmentAccess(assessmentId: number, user: CurrentUser) {
+  const own = await query('SELECT owner_email FROM assessments WHERE id = $1', [assessmentId]);
+  if (own.rows.length === 0) {
+    return NextResponse.json({ success: false, error: 'Assessment not found' }, { status: 404 });
+  }
+  if (!user.isAdmin && own.rows[0].owner_email !== user.email) {
+    return NextResponse.json({ success: false, error: 'Assessment not found' }, { status: 404 });
+  }
+  return null;
+}
 
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const assessmentId = parseInt(params.id, 10);
 
     if (isNaN(assessmentId)) {
@@ -14,6 +31,9 @@ export async function GET(
         { status: 400 }
       );
     }
+
+    const denied = await assertAssessmentAccess(assessmentId, user);
+    if (denied) return denied;
 
     // Get assessment details
     const assessmentResult = await query(
@@ -122,6 +142,9 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const assessmentId = parseInt(params.id, 10);
 
     if (isNaN(assessmentId)) {
@@ -130,6 +153,9 @@ export async function PATCH(
         { status: 400 }
       );
     }
+
+    const denied = await assertAssessmentAccess(assessmentId, user);
+    if (denied) return denied;
 
     const body = await request.json();
     const { teacher_id, subject_id, topic, assessment_date } = body;
@@ -194,6 +220,9 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
     const assessmentId = parseInt(params.id, 10);
 
     if (isNaN(assessmentId)) {
@@ -202,6 +231,9 @@ export async function DELETE(
         { status: 400 }
       );
     }
+
+    const denied = await assertAssessmentAccess(assessmentId, user);
+    if (denied) return denied;
 
     // Delete assessment and all related ratings (cascade delete handles this)
     const result = await query(
