@@ -61,7 +61,11 @@ export const authOptions: NextAuthOptions = {
   ],
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
-  pages: { signIn: '/login' },
+  // Route BOTH sign-in and auth errors (e.g. AccessDenied for users without an
+  // active subscription) to our custom /login page, which renders the themed
+  // "subscription required" card. Without pages.error, NextAuth falls back to
+  // its built-in /api/auth/error page (the old generic "Access Denied").
+  pages: { signIn: '/login', error: '/login' },
   callbacks: {
     // Reject anyone who is not on an active, unexpired account.
     async signIn({ user }) {
