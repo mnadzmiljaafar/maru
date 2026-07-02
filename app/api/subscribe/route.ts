@@ -3,7 +3,9 @@ import { query } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-const PRICE_PER_MONTH = 10; // RM
+// Early-access promotion: RM10 grants 3 months (normal price is RM10/month).
+const PROMO_PRICE = 10; // RM (flat)
+const PROMO_MONTHS = 3;
 const MAX_RECEIPT_BYTES = 4 * 1024 * 1024; // ~4MB data URL cap
 
 function isEmail(v: string) {
@@ -22,7 +24,8 @@ export async function POST(request: Request) {
     const reference = String(body.reference || '').trim();
     const receipt: string | undefined = body.receipt; // data URL
     const receiptMime = String(body.receipt_mime || '').trim() || null;
-    const months = Math.max(1, Math.min(12, parseInt(body.months, 10) || 1));
+    // Promo is fixed server-side so the client can't tamper with price/duration.
+    const months = PROMO_MONTHS;
 
     if (!isEmail(email)) {
       return NextResponse.json({ success: false, error: 'Sila masukkan email yang sah.' }, { status: 400 });
@@ -43,7 +46,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const amount = PRICE_PER_MONTH * months;
+    const amount = PROMO_PRICE;
 
     await query(
       `INSERT INTO payments (email, full_name, phone, amount, months, reference, receipt_data, receipt_mime, status)

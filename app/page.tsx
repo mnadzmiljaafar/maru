@@ -79,15 +79,18 @@ export default function LandingPage() {
           Pembelajaran KSSR — semua dalam satu sistem mesra guru. Jimatkan masa,
           fokus pada mengajar.
         </p>
+        <div className="promo-ribbon">
+          🎉 Tawaran Akses Awal — <strong>RM10 untuk 3 Bulan</strong> (bukan RM10/bulan)
+        </div>
         <div className="hero-actions">
           <button className="cta-btn big" onClick={() => router.push('/subscribe')}>
-            Mula dengan RM10/bulan
+            Dapatkan RM10 / 3 Bulan
           </button>
           <button className="ghost-btn big" onClick={() => signIn('google', { callbackUrl: '/dashboard' })}>
             Saya sudah melanggan →
           </button>
         </div>
-        <div className="trust">Digunakan oleh guru untuk menilai ratusan murid setiap hari.</div>
+        <div className="trust">Tawaran terhad untuk pengguna akses awal. Digunakan oleh guru untuk menilai ratusan murid setiap hari.</div>
       </section>
 
       <section className="features" id="features">
@@ -108,11 +111,14 @@ export default function LandingPage() {
         <h2>Harga mudah, tiada kontrak</h2>
         <p className="section-sub">Satu pelan, semua ciri. Batalkan bila-bila masa.</p>
         <div className="price-card">
+          <div className="promo-tag">🎉 Tawaran Akses Awal</div>
+          <div className="normal-price">Harga biasa: <s>RM10 / bulan</s></div>
           <div className="price-tag">
             <span className="currency">RM</span>
             <span className="amount">10</span>
-            <span className="period">/ bulan</span>
+            <span className="period">/ 3 bulan</span>
           </div>
+          <div className="save-note">Jimat RM20 — bayar sekali untuk 3 bulan penuh!</div>
           <ul className="price-list">
             <li>✅ Penilaian TP tanpa had</li>
             <li>✅ Murid, kelas, guru &amp; subjek tanpa had</li>
@@ -209,6 +215,13 @@ export default function LandingPage() {
         }
         .sub { max-width: 640px; margin: 0 auto 32px; font-size: 18px; color: #475569; line-height: 1.6; }
         .hero-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+        .promo-ribbon {
+          display: inline-block; margin: 0 auto 26px;
+          background: linear-gradient(120deg, #f59e0b, #f97316); color: #fff;
+          padding: 10px 20px; border-radius: 999px; font-size: 14px; font-weight: 600;
+          box-shadow: 0 10px 24px rgba(249, 115, 22, 0.28);
+        }
+        .promo-ribbon strong { font-weight: 800; }
         .trust { margin-top: 26px; font-size: 13px; color: #94a3b8; }
         .features, .pricing, .how { padding: 70px 6vw; max-width: 1100px; margin: 0 auto; text-align: center; }
         .features h2, .pricing h2, .how h2 { font-size: clamp(24px, 3.5vw, 34px); font-weight: 800; margin: 0 0 8px; }
@@ -226,9 +239,17 @@ export default function LandingPage() {
         .pricing { background: linear-gradient(180deg, #f8fafc, #eef2ff); border-radius: 28px; }
         .price-card {
           background: white; border-radius: 22px; max-width: 440px; margin: 0 auto;
-          padding: 40px 34px; box-shadow: 0 24px 60px rgba(79,70,229,0.14); border: 1px solid #e7eaf6;
+          padding: 40px 34px; box-shadow: 0 24px 60px rgba(79,70,229,0.14); border: 2px solid #f59e0b;
+          position: relative;
         }
-        .price-tag { display: flex; align-items: baseline; justify-content: center; gap: 4px; margin-bottom: 24px; }
+        .promo-tag {
+          display: inline-block; background: linear-gradient(120deg, #f59e0b, #f97316); color: #fff;
+          padding: 6px 16px; border-radius: 999px; font-size: 13px; font-weight: 800; margin-bottom: 16px;
+        }
+        .normal-price { color: #94a3b8; font-size: 15px; margin-bottom: 4px; }
+        .normal-price s { color: #cbd5e1; }
+        .save-note { color: #f97316; font-weight: 700; font-size: 14px; margin: -14px 0 22px; }
+        .price-tag { display: flex; align-items: baseline; justify-content: center; gap: 4px; margin-bottom: 6px; }
         .currency { font-size: 24px; font-weight: 700; color: #4f46e5; }
         .amount { font-size: 64px; font-weight: 800; letter-spacing: -0.03em; }
         .period { font-size: 18px; color: #94a3b8; }

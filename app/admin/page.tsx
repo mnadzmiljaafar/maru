@@ -35,7 +35,10 @@ interface Class {
 
 export default function AdminPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'students' | 'classes' | 'teachers' | 'subjects'>('students');
+  const [activeTab, setActiveTab] = useState<'students' | 'classes' | 'profile' | 'subjects'>('students');
+  const [profile, setProfile] = useState<{ email: string; name: string }>({ email: '', name: '' });
+  const [profileName, setProfileName] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -83,10 +86,50 @@ export default function AdminPage() {
   }, [activeTab]);
 
   const loadData = () => {
-    loadTeachers();
+    loadProfile();
     loadSubjects();
     loadStudents();
     loadClasses();
+  };
+
+  const loadProfile = async () => {
+    try {
+      const response = await fetch('/api/profile');
+      const data = await response.json();
+      if (data.success) {
+        setProfile(data.data);
+        setProfileName(data.data.name || '');
+      }
+    } catch (error) {
+      console.error('Error loading profile:', error);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!profileName.trim()) {
+      alert('Sila masukkan nama guru');
+      return;
+    }
+    setProfileSaving(true);
+    try {
+      const response = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: profileName.trim() }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        alert('Nama guru berjaya dikemaskini');
+        loadProfile();
+      } else {
+        alert('Gagal kemaskini: ' + (data.error || ''));
+      }
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      alert('Gagal kemaskini profil');
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   const loadTeachers = async () => {
@@ -654,8 +697,8 @@ export default function AdminPage() {
           <button className={`nav-tab ${activeTab === 'classes' ? 'active' : ''}`} onClick={() => setActiveTab('classes')}>
             🏫 Kelas
           </button>
-          <button className={`nav-tab ${activeTab === 'teachers' ? 'active' : ''}`} onClick={() => setActiveTab('teachers')}>
-            👨‍🏫 Guru
+          <button className={`nav-tab ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}>
+            👤 Profil Guru
           </button>
           <button className={`nav-tab ${activeTab === 'subjects' ? 'active' : ''}`} onClick={() => setActiveTab('subjects')}>
             📚 Subjek
@@ -844,84 +887,38 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TEACHERS TAB */}
-        {activeTab === 'teachers' && (
+        {/* PROFILE TAB — the account owner is the only teacher; they may edit
+            their own name. The email is fixed from their Google login. */}
+        {activeTab === 'profile' && (
           <div>
-            <div className="add-entry-box">
-              <h3>Tambah Guru Baru</h3>
-              <div className="form-grid cols-4">
+            <div className="add-entry-box" style={{ maxWidth: 520 }}>
+              <h3>Profil Guru</h3>
+              <p style={{ color: '#64748b', fontSize: 14, marginTop: -6, marginBottom: 16 }}>
+                Nama ini akan dipaparkan pada semua penilaian &amp; laporan anda.
+                Setiap langganan adalah untuk seorang guru sahaja.
+              </p>
+
+              <div className="form-group" style={{ marginBottom: 16 }}>
+                <label>Email (Google) </label>
+                <input type="email" value={profile.email} disabled readOnly
+                  style={{ background: '#f1f5f9', cursor: 'not-allowed' }} />
+                <small style={{ color: '#94a3b8' }}>Email tidak boleh diubah — diambil dari akaun Google anda.</small>
+              </div>
+
+              <div className="form-group" style={{ marginBottom: 16 }}>
+                <label>Nama Guru *</label>
                 <input
                   type="text"
-                  className="enhanced-input"
                   placeholder="Nama guru..."
-                  value={newTeacher.name}
-                  onChange={(e) => setNewTeacher({ ...newTeacher, name: e.target.value })}
-                  disabled={loading}
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  disabled={profileSaving}
                 />
-                <input
-                  type="email"
-                  className="enhanced-input"
-                  placeholder="Email..."
-                  value={newTeacher.email}
-                  onChange={(e) => setNewTeacher({ ...newTeacher, email: e.target.value })}
-                  disabled={loading}
-                />
-                <input
-                  type="tel"
-                  className="enhanced-input"
-                  placeholder="No. Telefon..."
-                  value={newTeacher.phone}
-                  onChange={(e) => setNewTeacher({ ...newTeacher, phone: e.target.value })}
-                  disabled={loading}
-                />
-                <button className="btn btn-primary" onClick={handleAddTeacher} disabled={loading}>
-                  ➕ Tambah
-                </button>
               </div>
-            </div>
 
-            <h3>Senarai Guru ({teachers.length})</h3>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="students-table">
-                <thead>
-                  <tr>
-                    <th>BIL</th>
-                    <th>NAMA GURU</th>
-                    <th>EMAIL</th>
-                    <th>NO. TELEFON</th>
-                    <th>TARIKH DITAMBAH</th>
-                    <th>TINDAKAN</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {teachers.map((teacher, index) => (
-                    <tr key={teacher.id}>
-                      <td>{index + 1}</td>
-                      <td><strong>{teacher.name}</strong></td>
-                      <td>{teacher.email || '-'}</td>
-                      <td>{teacher.phone || '-'}</td>
-                      <td>{new Date(teacher.created_at).toLocaleDateString('ms-MY')}</td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button className="btn btn-sm btn-outline" onClick={() => handleOpenEditTeacher(teacher)}>
-                            ✏️ Edit
-                          </button>
-                          <button className="btn btn-sm btn-danger" onClick={() => handleDeleteTeacher(teacher)}>
-                            🗑️ Padam
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {teachers.length === 0 && (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', padding: '20px' }}>
-                        Tiada guru dijumpai. Tambah guru baru di atas.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+              <button className="btn btn-primary" onClick={handleSaveProfile} disabled={profileSaving}>
+                {profileSaving ? 'Menyimpan...' : '💾 Simpan Nama'}
+              </button>
             </div>
           </div>
         )}
@@ -1062,53 +1059,6 @@ export default function AdminPage() {
                 Batal
               </button>
               <button className="btn btn-primary" onClick={handleSaveEditStudent} disabled={loading}>
-                {loading ? 'Menyimpan...' : 'Simpan'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Teacher Modal */}
-      {showEditTeacherModal && editingTeacher && (
-        <div className="modal-overlay" onClick={() => !loading && setShowEditTeacherModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Edit Guru</h2>
-            <div className="form-group">
-              <label>Nama Guru *</label>
-              <input
-                type="text"
-                placeholder="Nama guru..."
-                value={editTeacherForm.name}
-                onChange={(e) => setEditTeacherForm({ ...editTeacherForm, name: e.target.value })}
-                disabled={loading}
-              />
-            </div>
-            <div className="form-group">
-              <label>Email</label>
-              <input
-                type="email"
-                placeholder="Email..."
-                value={editTeacherForm.email}
-                onChange={(e) => setEditTeacherForm({ ...editTeacherForm, email: e.target.value })}
-                disabled={loading}
-              />
-            </div>
-            <div className="form-group">
-              <label>No. Telefon</label>
-              <input
-                type="tel"
-                placeholder="No. Telefon..."
-                value={editTeacherForm.phone}
-                onChange={(e) => setEditTeacherForm({ ...editTeacherForm, phone: e.target.value })}
-                disabled={loading}
-              />
-            </div>
-            <div className="modal-buttons">
-              <button className="btn btn-outline" onClick={() => { setShowEditTeacherModal(false); setEditingTeacher(null); }} disabled={loading}>
-                Batal
-              </button>
-              <button className="btn btn-primary" onClick={handleSaveEditTeacher} disabled={loading}>
                 {loading ? 'Menyimpan...' : 'Simpan'}
               </button>
             </div>

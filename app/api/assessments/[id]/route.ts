@@ -158,20 +158,19 @@ export async function PATCH(
     if (denied) return denied;
 
     const body = await request.json();
-    const { teacher_id, subject_id, topic, assessment_date } = body;
+    const { subject_id, topic, assessment_date } = body;
 
-    if (!teacher_id || !subject_id || !assessment_date) {
+    if (!subject_id || !assessment_date) {
       return NextResponse.json(
-        { success: false, error: 'Teacher ID, subject ID, and date are required' },
+        { success: false, error: 'Subject ID and date are required' },
         { status: 400 }
       );
     }
 
     // Parse IDs to integers
-    const teacherIdInt = parseInt(teacher_id.toString(), 10);
     const subjectIdInt = parseInt(subject_id.toString(), 10);
 
-    if (isNaN(teacherIdInt) || isNaN(subjectIdInt)) {
+    if (isNaN(subjectIdInt)) {
       return NextResponse.json(
         { success: false, error: 'Invalid ID format' },
         { status: 400 }
@@ -186,13 +185,14 @@ export async function PATCH(
       );
     }
 
-    // Update assessment
+    // The teacher (account owner) is fixed and never changes on edit — only the
+    // subject, topic and date are editable here.
     const result = await query(
-      `UPDATE assessments 
-       SET teacher_id = $2, subject_id = $3, topic = $4, assessment_date = $5, updated_at = CURRENT_TIMESTAMP
+      `UPDATE assessments
+       SET subject_id = $2, topic = $3, assessment_date = $4, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
        RETURNING id, class_id, teacher_id, subject_id, topic, assessment_date`,
-      [assessmentId, teacherIdInt, subjectIdInt, topic || null, assessment_date]
+      [assessmentId, subjectIdInt, topic || null, assessment_date]
     );
 
     if (result.rows.length === 0) {

@@ -86,6 +86,8 @@ export const authOptions: NextAuthOptions = {
 
 export type CurrentUser = {
   email: string;
+  // Display name from the Google account (used as the default teacher name).
+  name: string | null;
   role: 'superadmin' | 'user';
   isSuperadmin: boolean;
   // Retained for backward compatibility with data routes. Owner-scoping now
@@ -106,6 +108,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   if (!allowed) return null;
   return {
     email: email.toLowerCase(),
+    name: session?.user?.name || null,
     role,
     isSuperadmin: role === 'superadmin',
     isAdmin: false,

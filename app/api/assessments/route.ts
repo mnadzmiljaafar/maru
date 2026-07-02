@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
+import { ensureSelfTeacherId } from '@/lib/self-teacher';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,22 +76,25 @@ export async function POST(request: Request) {
     if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { class_id, teacher_id, subject_id, topic, assessment_date, subtopics } = body;
+    const { class_id, subject_id, topic, assessment_date, subtopics } = body;
 
-    if (!class_id || !teacher_id || !subject_id || !assessment_date) {
+    if (!class_id || !subject_id || !assessment_date) {
       return NextResponse.json(
-        { success: false, error: 'Class, teacher, subject, and date are required' },
+        { success: false, error: 'Class, subject, and date are required' },
         { status: 400 }
       );
     }
 
     const classIdInt = parseInt(class_id.toString(), 10);
-    const teacherIdInt = parseInt(teacher_id.toString(), 10);
     const subjectIdInt = parseInt(subject_id.toString(), 10);
 
-    if (isNaN(classIdInt) || isNaN(teacherIdInt) || isNaN(subjectIdInt)) {
+    if (isNaN(classIdInt) || isNaN(subjectIdInt)) {
       return NextResponse.json({ success: false, error: 'Invalid ID format' }, { status: 400 });
     }
+
+    // The teacher is always the account owner themselves (one subscription = one
+    // teacher). Ignore any client-supplied teacher_id.
+    const teacherIdInt = await ensureSelfTeacherId(user.email, user.name);
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(assessment_date)) {
       return NextResponse.json({ success: false, error: 'Invalid date format. Use YYYY-MM-DD' }, { status: 400 });

@@ -9,7 +9,9 @@ const QR_IMAGE = process.env.NEXT_PUBLIC_DUITNOW_QR || '/duitnow-qr.png';
 const PAYEE_NAME = process.env.NEXT_PUBLIC_DUITNOW_NAME || 'Muhammad Nadzmil';
 const BANK_NAME = process.env.NEXT_PUBLIC_DUITNOW_BANK || '';
 const ACCOUNT_NO = process.env.NEXT_PUBLIC_DUITNOW_ACCOUNT || '';
+// Early-access promo: RM10 grants 3 months (normal price RM10/month).
 const PRICE = 10;
+const PROMO_MONTHS = 3;
 
 export default function SubscribePage() {
   const router = useRouter();
@@ -48,7 +50,7 @@ export default function SubscribePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
-          months: 1,
+          months: PROMO_MONTHS,
           receipt: receipt?.data,
           receipt_mime: receipt?.mime,
         }),
@@ -86,8 +88,12 @@ export default function SubscribePage() {
       ) : (
         <div className="grid">
           <div className="card pay-card">
-            <h2>1. Bayar RM{PRICE} / bulan</h2>
-            <p className="muted">Imbas kod DuitNow QR di bawah menggunakan aplikasi perbankan atau e-dompet anda.</p>
+            <div className="promo-pill">🎉 Akses Awal · RM{PRICE} untuk {PROMO_MONTHS} bulan</div>
+            <h2>1. Bayar RM{PRICE}</h2>
+            <p className="muted">
+              Harga biasa <s>RM{PRICE}/bulan</s> — kini dapatkan <strong>{PROMO_MONTHS} bulan penuh</strong> dengan
+              satu bayaran RM{PRICE}. Imbas kod DuitNow QR di bawah menggunakan aplikasi perbankan atau e-dompet anda.
+            </p>
             <div className="qr-wrap">
               <img
                 src={QR_IMAGE}
@@ -150,6 +156,11 @@ export default function SubscribePage() {
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; max-width: 940px; margin: 20px auto; padding: 0 6vw; }
         .card { background: white; border-radius: 20px; padding: 30px; box-shadow: 0 14px 40px rgba(79,70,229,0.10); border: 1px solid #e7eaf6; }
         .card h2 { margin: 0 0 6px; font-size: 20px; }
+        .promo-pill {
+          display: inline-block; background: linear-gradient(120deg, #f59e0b, #f97316); color: #fff;
+          padding: 6px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 800; margin-bottom: 12px;
+        }
+        .muted s { color: #cbd5e1; }
         .muted { color: #64748b; font-size: 14px; margin: 0 0 18px; line-height: 1.5; }
         .qr-wrap {
           display: flex; align-items: center; justify-content: center;

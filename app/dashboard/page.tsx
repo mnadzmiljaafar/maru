@@ -246,7 +246,7 @@ export default function Home() {
   };
 
   const handleCreateAssessment = async () => {
-    if (!newAssessment.class_id || !newAssessment.teacher_id || !newAssessment.subject_id || !newAssessment.assessment_date.trim()) {
+    if (!newAssessment.class_id || !newAssessment.subject_id || !newAssessment.assessment_date.trim()) {
       alert('Sila lengkapkan semua maklumat');
       return;
     }
@@ -261,7 +261,6 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           class_id: parseInt(newAssessment.class_id, 10),
-          teacher_id: parseInt(newAssessment.teacher_id, 10),
           subject_id: parseInt(newAssessment.subject_id, 10),
           topic: newAssessment.topic,
           assessment_date: newAssessment.assessment_date,
@@ -695,7 +694,7 @@ export default function Home() {
   };
 
   const handleSaveEditAssessment = async () => {
-    if (!editingAssessment || !editingAssessment.teacher_id || !editingAssessment.subject_id || !editingAssessment.assessment_date) {
+    if (!editingAssessment || !editingAssessment.subject_id || !editingAssessment.assessment_date) {
       alert('Sila lengkapkan semua maklumat');
       return;
     }
@@ -707,7 +706,6 @@ export default function Home() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          teacher_id: parseInt(editingAssessment.teacher_id, 10),
           subject_id: parseInt(editingAssessment.subject_id, 10),
           topic: editingAssessment.topic,
           assessment_date: editingAssessment.assessment_date,
@@ -1183,20 +1181,6 @@ export default function Home() {
               </select>
             </div>
             <div className="form-group">
-              <label>Nama Guru *</label>
-              <select
-                value={newAssessment.teacher_id}
-                onChange={(e) => setNewAssessment({ ...newAssessment, teacher_id: e.target.value })}
-              >
-                <option value="">-- Pilih Guru --</option>
-                {teachers.map(teacher => (
-                  <option key={teacher.id} value={teacher.id}>
-                    {teacher.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
               <label>Subjek *</label>
               <select
                 value={newAssessment.subject_id}
@@ -1285,21 +1269,6 @@ export default function Home() {
         <div className="modal-overlay" onClick={() => { if (!loading) setShowEditAssessmentModal(false); }}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '90vh', overflowY: 'auto' }}>
             <h2>Edit Penilaian</h2>
-            <div className="form-group">
-              <label>Nama Guru *</label>
-              <select
-                value={editingAssessment.teacher_id}
-                onChange={(e) => setEditingAssessment({ ...editingAssessment, teacher_id: e.target.value })}
-                disabled={loading}
-              >
-                <option value="">-- Pilih Guru --</option>
-                {teachers.map(teacher => (
-                  <option key={teacher.id} value={teacher.id}>
-                    {teacher.name}
-                  </option>
-                ))}
-              </select>
-            </div>
             <div className="form-group">
               <label>Subjek *</label>
               <select
