@@ -87,36 +87,10 @@ export async function GET(
           [student.id, assessmentId]
         );
 
-        // Calculate average if subtopics exist
-        let averageRating = null;
-        if (subtopics.length > 0) {
-          const subtopicRatings = ratingsResult.rows.filter((r: any) => r.subtopic_id !== null);
-          if (subtopicRatings.length > 0) {
-            const ratingValues = subtopicRatings
-              .map((r: any) => {
-                if (r.rating_type === 'TD') return null;
-                return parseInt(r.rating_type.replace('TP', ''), 10);
-              })
-              .filter((v: number | null) => v !== null);
-
-            if (ratingValues.length > 0) {
-              const avg = ratingValues.reduce((a: number, b: number) => a + b, 0) / ratingValues.length;
-              if (avg >= 5.5) averageRating = 'TP6';
-              else if (avg >= 4.5) averageRating = 'TP5';
-              else if (avg >= 3.5) averageRating = 'TP4';
-              else if (avg >= 2.5) averageRating = 'TP3';
-              else if (avg >= 1.5) averageRating = 'TP2';
-              else averageRating = 'TP1';
-            } else if (subtopicRatings.length > 0) {
-              // All ratings are TD
-              averageRating = 'TD';
-            }
-          }
-        } else {
-          // No subtopics, use direct rating
-          const directRating = ratingsResult.rows.find((r: any) => r.subtopic_id === null);
-          averageRating = directRating?.rating_type || null;
-        }
+        // The overall/PURATA is stored in the subtopic_id IS NULL row for both
+        // subtopic-based (editable TP level) and direct (binary) assessments.
+        const overallRating = ratingsResult.rows.find((r: any) => r.subtopic_id === null);
+        const averageRating = overallRating?.rating_type || null;
 
         return {
           ...student,
@@ -147,6 +121,15 @@ export async function GET(
       { status: 500 }
     );
   }
+}
+
+// Maps a stored rating code to its human-readable label. Binary codes become
+// Menguasai / Tidak Menguasai; TP levels (used for the overall PURATA) pass through.
+function ratingLabel(code: string | null | undefined): string {
+  if (!code) return '';
+  if (code === 'M') return 'Menguasai';
+  if (code === 'TM') return 'Tidak Menguasai';
+  return code;
 }
 
 function generateCSV(assessment: any, students: any[], subtopics: any[]): string {
@@ -186,11 +169,11 @@ function generateCSV(assessment: any, students: any[], subtopics: any[]): string
     if (subtopics.length > 0) {
       subtopics.forEach((st: any) => {
         const rating = student.ratings.find((r: any) => r.subtopic_id === st.id);
-        rowCols.push(rating?.rating_type || 'TD');
+        rowCols.push(ratingLabel(rating?.rating_type) || 'Tidak Dinilai');
       });
     }
-    
-    rowCols.push(student.averageRating || 'Belum dinilai');
+
+    rowCols.push(ratingLabel(student.averageRating) || 'Belum dinilai');
     lines.push(rowCols.join(','));
   });
   

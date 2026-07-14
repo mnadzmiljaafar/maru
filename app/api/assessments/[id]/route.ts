@@ -88,11 +88,12 @@ export async function GET(
     const studentsWithRatings = await Promise.all(
       studentsResult.rows.map(async (student) => {
         let ratings: any[] = [];
+        let averageRating: string | null = null;
 
         if (subtopics.length > 0) {
-          // If there are subtopics, get ratings for each subtopic
+          // If there are subtopics, get the binary rating for each subtopic
           const ratingsResult = await query(
-            `SELECT 
+            `SELECT
               r.subtopic_id,
               r.rating_type
             FROM ratings r
@@ -101,10 +102,21 @@ export async function GET(
             [student.id, assessmentId]
           );
           ratings = ratingsResult.rows;
+
+          // The overall/PURATA is now a teacher-editable TP level stored in the
+          // subtopic_id IS NULL row (rather than being computed from subtopics).
+          const overallResult = await query(
+            `SELECT rating_type FROM ratings
+             WHERE student_id = $1 AND assessment_id = $2 AND subtopic_id IS NULL`,
+            [student.id, assessmentId]
+          );
+          if (overallResult.rows.length > 0) {
+            averageRating = overallResult.rows[0].rating_type;
+          }
         } else {
-          // No subtopics - get the overall rating
+          // No subtopics - get the overall (binary) rating
           const ratingResult = await query(
-            `SELECT rating_type FROM ratings 
+            `SELECT rating_type FROM ratings
              WHERE student_id = $1 AND assessment_id = $2 AND subtopic_id IS NULL`,
             [student.id, assessmentId]
           );
@@ -116,6 +128,7 @@ export async function GET(
         return {
           ...student,
           ratings,
+          averageRating,
         };
       })
     );

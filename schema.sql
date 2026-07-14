@@ -72,7 +72,10 @@ CREATE TABLE IF NOT EXISTS ratings (
     student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     assessment_id INTEGER NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
     subtopic_id INTEGER REFERENCES subtopics(id) ON DELETE CASCADE,
-    rating_type VARCHAR(10) CHECK (rating_type IS NULL OR rating_type IN ('TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD')),
+    -- Subtopic ratings and no-subtopic (direct) ratings use the binary scale 'M'
+    -- (Menguasai) / 'TM' (Tidak Menguasai). The overall/PURATA row (subtopic_id
+    -- IS NULL) of a subtopic-based assessment stores an editable TP level.
+    rating_type VARCHAR(10) CHECK (rating_type IS NULL OR rating_type IN ('TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD', 'M', 'TM')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(student_id, assessment_id, subtopic_id)

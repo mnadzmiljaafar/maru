@@ -66,6 +66,19 @@ const TP_INFO: Record<string, string> = {
   TD: 'Tidak Dinilai',
 };
 
+// Binary mastery scale used for subtopic ratings and direct (no-subtopic) ratings.
+const MASTERY_LEVELS = ['M', 'TM'] as const;
+
+const MASTERY_INFO: Record<string, string> = {
+  M: 'Menguasai',
+  TM: 'Tidak Menguasai',
+};
+
+// Maps any stored rating code to its display label: binary codes become
+// Menguasai / Tidak Menguasai; TP levels pass through unchanged.
+const ratingLabel = (code: string | null | undefined): string =>
+  code ? (MASTERY_INFO[code] || code) : '';
+
 export default function Home() {
   const router = useRouter();
   const { data: session } = useSession();
@@ -185,44 +198,9 @@ export default function Home() {
       const response = await fetch(`/api/assessments/${assessmentId}`);
       const data = await response.json();
       if (data.success) {
-        // Calculate average ratings for students with subtopics
-        const assessmentData = data.data;
-        if (assessmentData.subtopics && assessmentData.subtopics.length > 0) {
-          assessmentData.students = assessmentData.students.map((student: any) => {
-            const ratings = student.ratings
-              .filter((r: any) => r.rating_type !== null)
-              .map((r: any) => r.rating_type);
-            
-            let averageRating = null;
-            if (ratings.length > 0) {
-              // Filter out TD values and extract numeric values from TP ratings
-              const ratingValues = ratings
-                .filter((r: string) => r !== 'TD')
-                .map((r: string) => {
-                  const match = r.match(/\d+/);
-                  return match ? parseInt(match[0]) : null;
-                })
-                .filter((v: number | null) => v !== null) as number[];
-              
-              if (ratingValues.length > 0) {
-                const average = ratingValues.reduce((a: number, b: number) => a + b, 0) / ratingValues.length;
-                
-                if (average >= 5.5) averageRating = 'TP6';
-                else if (average >= 4.5) averageRating = 'TP5';
-                else if (average >= 3.5) averageRating = 'TP4';
-                else if (average >= 2.5) averageRating = 'TP3';
-                else if (average >= 1.5) averageRating = 'TP2';
-                else averageRating = 'TP1';
-              } else {
-                // All ratings are TD
-                averageRating = 'TD';
-              }
-            }
-            
-            return { ...student, averageRating };
-          });
-        }
-        setSelectedAssessment(assessmentData);
+        // averageRating (the overall/PURATA) is now teacher-editable and comes
+        // straight from the API — no client-side formula.
+        setSelectedAssessment(data.data);
       }
     } catch (error) {
       console.error('Error loading assessment detail:', error);
@@ -361,6 +339,46 @@ export default function Home() {
     }
   };
 
+  // Sets the teacher-editable overall (PURATA) TP level for a subtopic-based
+  // assessment. Stored in the subtopic_id IS NULL rating row.
+  const handleOverallRatingClick = async (studentId: number, ratingType: string, isCurrentlySelected: boolean) => {
+    if (!selectedAssessment) return;
+
+    try {
+      const newValue = isCurrentlySelected ? null : ratingType;
+
+      const response = await fetch('/api/ratings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: studentId,
+          assessment_id: selectedAssessment.assessment.id,
+          subtopic_id: null,
+          rating_type: newValue,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSelectedAssessment(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            students: prev.students.map(student =>
+              student.id === studentId ? { ...student, averageRating: newValue } : student
+            ),
+          };
+        });
+      } else {
+        alert('Gagal kemaskini purata');
+      }
+    } catch (error) {
+      console.error('Error updating overall rating:', error);
+      alert('Gagal kemaskini purata');
+    }
+  };
+
   const handleSubtopicRatingChange = (subtopicId: number, ratingType: string | null) => {
     setSubtopicRatings(prev => ({
       ...prev,
@@ -388,35 +406,8 @@ export default function Home() {
         });
       }
 
-      // Calculate average rating
-      const ratings = Object.values(subtopicRatings).filter((r) => r !== null) as string[];
-      let averageRating = null;
-      if (ratings.length > 0) {
-        // Filter out TD values and extract numeric values from TP ratings
-        const ratingValues = ratings
-          .filter(r => r !== 'TD')
-          .map(r => {
-            const match = r.match(/\d+/);
-            return match ? parseInt(match[0]) : null;
-          })
-          .filter((v: number | null) => v !== null) as number[];
-        
-        if (ratingValues.length > 0) {
-          const average = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
-          
-          if (average >= 5.5) averageRating = 'TP6';
-          else if (average >= 4.5) averageRating = 'TP5';
-          else if (average >= 3.5) averageRating = 'TP4';
-          else if (average >= 2.5) averageRating = 'TP3';
-          else if (average >= 1.5) averageRating = 'TP2';
-          else averageRating = 'TP1';
-        } else {
-          // All ratings are TD
-          averageRating = 'TD';
-        }
-      }
-
-      // Update the student's ratings in the UI
+      // Update the student's subtopic ratings in the UI. The overall (PURATA) is
+      // set separately by the teacher, so it is preserved here as-is.
       setSelectedAssessment(prev => {
         if (!prev) return prev;
         return {
@@ -428,11 +419,10 @@ export default function Home() {
                 subtopic_id: subtopic.id,
                 rating_type: subtopicRatings[subtopic.id] || null,
               }));
-              
+
               return {
                 ...s,
                 ratings: updatedRatings,
-                averageRating,
               };
             }
             return s;
@@ -521,7 +511,7 @@ export default function Home() {
             </thead>
             <tbody>`;
 
-        // TP Colors mapping
+        // Rating colour mapping (TP levels for PURATA + binary mastery scale)
         const tpColors: { [key: string]: string } = {
           'TP1': '#dc2626',
           'TP2': '#f97316',
@@ -530,6 +520,8 @@ export default function Home() {
           'TP5': '#22c55e',
           'TP6': '#3b82f6',
           'TD': '#9ca3af',
+          'M': '#22c55e',
+          'TM': '#dc2626',
         };
 
         // Student rows
@@ -542,24 +534,27 @@ export default function Home() {
           if (hasSubtopics) {
             subtopics.forEach((subtopic: any) => {
               const rating = student.ratings?.find((r: any) => r.subtopic_id === subtopic.id);
-              const ratingText = rating?.rating_type || 'TD';
-              const bgColor = tpColors[ratingText] || '#ffffff';
-              
+              const ratingCode = rating?.rating_type || null;
+              const bgColor = ratingCode ? (tpColors[ratingCode] || '#ffffff') : '#ffffff';
+              const cellText = ratingCode ? ratingLabel(ratingCode) : 'Tidak Dinilai';
+              const cellColor = ratingCode ? 'white' : '#6b7280';
+
               htmlContent += `
-                <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${bgColor}; color: white; font-weight: bold;">
-                  ${ratingText}
+                <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${bgColor}; color: ${cellColor}; font-weight: bold;">
+                  ${cellText}
                 </td>`;
             });
           }
-          
-          const avgRating = student.averageRating || (student.ratings && student.ratings.length > 0 && !hasSubtopics ? student.ratings[0].rating_type : null) || 'Belum dinilai';
-          const avgColor = tpColors[avgRating] || '#ffffff';
-          const textColor = avgRating !== 'Belum dinilai' ? 'white' : '#6b7280';
-          const fontWeight = avgRating !== 'Belum dinilai' ? 'bold' : 'normal';
-          
+
+          const avgCode = student.averageRating || (student.ratings && student.ratings.length > 0 && !hasSubtopics ? student.ratings[0].rating_type : null) || null;
+          const avgText = avgCode ? ratingLabel(avgCode) : 'Belum dinilai';
+          const avgColor = avgCode ? (tpColors[avgCode] || '#ffffff') : '#ffffff';
+          const textColor = avgCode ? 'white' : '#6b7280';
+          const fontWeight = avgCode ? 'bold' : 'normal';
+
           htmlContent += `
               <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${avgColor}; color: ${textColor}; font-weight: ${fontWeight};">
-                ${avgRating}
+                ${avgText}
               </td>
             </tr>`;
         });
@@ -922,19 +917,32 @@ export default function Home() {
                   const total = selectedAssessment.students.length;
                   const ratedCount = finals.filter(r => !!r).length;
                   const pct = total > 0 ? Math.round((ratedCount / total) * 100) : 0;
+
+                  // Distribution + summary adapt to the assessment's scale: subtopic
+                  // assessments use the TP-level PURATA; direct assessments are binary.
+                  const levels: readonly string[] = hasSubtopics ? TP_LEVELS : MASTERY_LEVELS;
+                  const info = hasSubtopics ? TP_INFO : MASTERY_INFO;
                   const dist: Record<string, number> = {};
-                  TP_LEVELS.forEach(tp => { dist[tp] = 0; });
+                  levels.forEach(l => { dist[l] = 0; });
                   finals.forEach(r => { if (r && dist[r] !== undefined) dist[r]++; });
 
-                  // Class average mastery (numeric TP only, excludes TD / unrated)
-                  const numeric = finals
-                    .filter((r): r is string => !!r && r !== 'TD')
-                    .map(r => parseInt(r.replace('TP', ''), 10))
-                    .filter(n => !isNaN(n));
+                  // Class summary: mean TP for subtopic assessments; % Menguasai otherwise.
                   let avg: string | null = null;
-                  if (numeric.length > 0) {
-                    const mean = numeric.reduce((a, b) => a + b, 0) / numeric.length;
-                    avg = 'TP' + Math.min(6, Math.max(1, Math.round(mean)));
+                  let avgTitle = 'Belum ada data';
+                  if (hasSubtopics) {
+                    const numeric = finals
+                      .filter((r): r is string => !!r && r !== 'TD')
+                      .map(r => parseInt(r.replace('TP', ''), 10))
+                      .filter(n => !isNaN(n));
+                    if (numeric.length > 0) {
+                      const mean = numeric.reduce((a, b) => a + b, 0) / numeric.length;
+                      avg = 'TP' + Math.min(6, Math.max(1, Math.round(mean)));
+                      avgTitle = TP_INFO[avg];
+                    }
+                  } else if (ratedCount > 0) {
+                    const masteredPct = Math.round((dist['M'] / ratedCount) * 100);
+                    avg = `${masteredPct}% M`;
+                    avgTitle = `${dist['M']} daripada ${ratedCount} murid menguasai`;
                   }
 
                   return (
@@ -949,19 +957,19 @@ export default function Home() {
                           <span className="progress-pct">{pct}%</span>
                         </div>
                         <div className="progress-avg">
-                          <span>Purata penguasaan kelas</span>
-                          <span className={`avg-badge ${avg ? avg.toLowerCase() : 'none'}`} title={avg ? TP_INFO[avg] : 'Belum ada data'}>
+                          <span>{hasSubtopics ? 'Purata penguasaan kelas' : 'Peratus menguasai'}</span>
+                          <span className={`avg-badge ${avg && hasSubtopics ? avg.toLowerCase() : (avg ? 'm' : 'none')}`} title={avgTitle}>
                             {avg || '—'}
                           </span>
                         </div>
                       </div>
                       <div className="summary-card">
-                        <h4>📊 Taburan Tahap Penguasaan</h4>
+                        <h4>📊 {hasSubtopics ? 'Taburan Tahap Penguasaan' : 'Taburan Penguasaan'}</h4>
                         <div className="dist-grid">
-                          {TP_LEVELS.map(tp => (
-                            <div key={tp} className={`dist-chip ${tp.toLowerCase()}`} title={TP_INFO[tp]}>
-                              <span className="dist-count">{dist[tp]}</span>
-                              <span className="dist-label">{tp}</span>
+                          {levels.map(l => (
+                            <div key={l} className={`dist-chip ${l.toLowerCase()}`} title={info[l]}>
+                              <span className="dist-count">{dist[l]}</span>
+                              <span className="dist-label">{l}</span>
                             </div>
                           ))}
                         </div>
@@ -970,17 +978,49 @@ export default function Home() {
                   );
                 })()}
 
-                <div className="tp-legend-card">
-                  <h4>📖 Panduan Tahap Penguasaan (TP)</h4>
-                  <div className="tp-legend">
-                    {TP_LEVELS.map(tp => (
-                      <div key={tp} className="tp-legend-item">
-                        <span className={`tp-legend-swatch ${tp.toLowerCase()}`} style={{ background: `var(--${tp.toLowerCase()})` }}>{tp}</span>
-                        <span>{TP_INFO[tp]}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                {(() => {
+                  const hasSubtopics = !!(selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0);
+                  return (
+                    <div className="tp-legend-card">
+                      {hasSubtopics ? (
+                        <>
+                          <h4>📖 Panduan Penilaian</h4>
+                          <p style={{ margin: '0 0 8px', fontSize: '13px', color: '#475569' }}>
+                            Setiap standard pembelajaran dinilai secara <strong>Menguasai / Tidak Menguasai</strong>. Purata keseluruhan (TP) ditetapkan oleh guru.
+                          </p>
+                          <div className="tp-legend">
+                            {MASTERY_LEVELS.map(m => (
+                              <div key={m} className="tp-legend-item">
+                                <span className={`tp-legend-swatch ${m.toLowerCase()}`} style={{ background: `var(--${m.toLowerCase()})` }}>{m}</span>
+                                <span>{MASTERY_INFO[m]}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="tp-legend" style={{ marginTop: '10px' }}>
+                            {TP_LEVELS.map(tp => (
+                              <div key={tp} className="tp-legend-item">
+                                <span className={`tp-legend-swatch ${tp.toLowerCase()}`} style={{ background: `var(--${tp.toLowerCase()})` }}>{tp}</span>
+                                <span>{TP_INFO[tp]}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <h4>📖 Panduan Penilaian</h4>
+                          <div className="tp-legend">
+                            {MASTERY_LEVELS.map(m => (
+                              <div key={m} className="tp-legend-item">
+                                <span className={`tp-legend-swatch ${m.toLowerCase()}`} style={{ background: `var(--${m.toLowerCase()})` }}>{m}</span>
+                                <span>{MASTERY_INFO[m]}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <div className="grade-toolbar">
                   <input
@@ -1026,7 +1066,7 @@ export default function Home() {
                             <td><strong>{student.name}</strong></td>
                             <td>
                               {hasSubtopics ? (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                   <button
                                     className="btn btn-primary"
                                     onClick={() => handleRatingClick(student.id, student)}
@@ -1034,14 +1074,16 @@ export default function Home() {
                                   >
                                     📝 Nilai
                                   </button>
+                                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#475569' }}>Purata:</span>
                                   <div className="tp-buttons">
-                                    {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => {
+                                    {TP_LEVELS.map(tp => {
                                       const isAverage = student.averageRating === tp;
                                       return (
                                         <button
                                           key={tp}
                                           className={`tp-btn ${tp.toLowerCase()} ${isAverage ? 'selected' : ''}`}
-                                          style={{ cursor: 'default', pointerEvents: 'none' }}
+                                          onClick={() => handleOverallRatingClick(student.id, tp, isAverage)}
+                                          title={TP_INFO[tp]}
                                         >
                                           {tp}
                                         </button>
@@ -1051,15 +1093,15 @@ export default function Home() {
                                 </div>
                               ) : (
                                 <div className="tp-buttons">
-                                  {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => {
-                                    const isSelected = student.ratings && student.ratings.length > 0 && student.ratings[0].rating_type === tp;
+                                  {MASTERY_LEVELS.map(m => {
+                                    const isSelected = !!(student.ratings && student.ratings.length > 0 && student.ratings[0].rating_type === m);
                                     return (
                                       <button
-                                        key={tp}
-                                        className={`tp-btn ${tp.toLowerCase()} ${isSelected ? 'selected' : ''}`}
-                                        onClick={() => handleDirectRatingClick(student.id, tp, isSelected)}
+                                        key={m}
+                                        className={`tp-btn ${m.toLowerCase()} ${isSelected ? 'selected' : ''}`}
+                                        onClick={() => handleDirectRatingClick(student.id, m, isSelected)}
                                       >
-                                        {tp}
+                                        {MASTERY_INFO[m]}
                                       </button>
                                     );
                                   })}
@@ -1396,15 +1438,15 @@ export default function Home() {
               <div key={subtopic.id} style={{ marginBottom: '20px', padding: '15px', background: '#f9f9f9', borderRadius: '8px' }}>
                 <p style={{ marginBottom: '10px', fontWeight: 'bold' }}>{subtopic.name}</p>
                 <div className="tp-buttons-container" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                  {['TP1', 'TP2', 'TP3', 'TP4', 'TP5', 'TP6', 'TD'].map(tp => (
+                  {MASTERY_LEVELS.map(m => (
                     <button
-                      key={tp}
-                      className={`tp-btn ${tp.toLowerCase()} ${subtopicRatings[subtopic.id] === tp ? 'selected' : ''}`}
-                      onClick={() => handleSubtopicRatingChange(subtopic.id, tp)}
+                      key={m}
+                      className={`tp-btn ${m.toLowerCase()} ${subtopicRatings[subtopic.id] === m ? 'selected' : ''}`}
+                      onClick={() => handleSubtopicRatingChange(subtopic.id, m)}
                       disabled={loading}
                       style={{ padding: '8px 12px', fontSize: '12px' }}
                     >
-                      {tp}
+                      {MASTERY_INFO[m]}
                     </button>
                   ))}
                 </div>

@@ -44,6 +44,10 @@
   --tp5: #6ee7b7;
   --tp6: #5eead4;
   --td: #c7d2fe;
+
+  /* Binary mastery palette (Menguasai / Tidak Menguasai) */
+  --m: #6ee7b7;
+  --tm: #fca5a5;
 }
 
 body {
@@ -497,6 +501,8 @@ input[type="checkbox"] {
 .tp-btn.tp5 { background: var(--tp5); }
 .tp-btn.tp6 { background: var(--tp6); }
 .tp-btn.td  { background: var(--td); }
+.tp-btn.m   { background: var(--m); }
+.tp-btn.tm  { background: var(--tm); }
 
 /* ---------- Modals ---------- */
 .modal-overlay {
@@ -920,6 +926,8 @@ input[type="checkbox"] {
 .dist-chip.tp5 { background: var(--tp5); }
 .dist-chip.tp6 { background: var(--tp6); }
 .dist-chip.td  { background: var(--td); }
+.dist-chip.m   { background: var(--m); }
+.dist-chip.tm  { background: var(--tm); }
 
 /* Class average mastery badge */
 .progress-avg {
@@ -951,6 +959,8 @@ input[type="checkbox"] {
 .avg-badge.tp4 { background: var(--tp4); }
 .avg-badge.tp5 { background: var(--tp5); }
 .avg-badge.tp6 { background: var(--tp6); }
+.avg-badge.m   { background: var(--m); }
+.avg-badge.tm  { background: var(--tm); }
 .avg-badge.none {
   background: var(--bg-subtle);
   color: var(--text-muted);
