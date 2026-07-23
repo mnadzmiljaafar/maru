@@ -1012,6 +1012,58 @@ input[type="checkbox"] {
 
 .grade-toggle:hover { border-color: var(--primary-light); }
 
+/* Bulk mastery marking bar (shown when students are ticked) */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0 0.25rem;
+  padding: 0.85rem 1.1rem;
+  background: white;
+  border: 1.5px solid var(--primary-light);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.08);
+}
+
+.bulk-count {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.bulk-note {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.bulk-actions .tp-btn:disabled,
+.bulk-actions .btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Row + checkbox styling for bulk selection */
+.students-table input[type='checkbox'] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.students-table tbody tr.row-selected,
+.students-table tbody tr.row-selected:nth-child(even) {
+  background: #eef0ff;
+}
+
 .tp-legend-card {
   background: var(--bg-subtle);
   border: 1px solid var(--border);

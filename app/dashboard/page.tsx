@@ -109,6 +109,9 @@ export default function Home() {
   const [editingAssessment, setEditingAssessment] = useState<any>(null);
   const [gradeSearch, setGradeSearch] = useState('');
   const [showUnratedOnly, setShowUnratedOnly] = useState(false);
+  // Students ticked for bulk mastery marking. Cleared whenever the assessment changes.
+  const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   useEffect(() => {
     if (session?.user) {
@@ -183,6 +186,7 @@ export default function Home() {
   const loadAssessments = async () => {
     try {
       setSelectedAssessment(null);
+      setSelectedStudentIds([]);
       const response = await fetch('/api/assessments');
       const data = await response.json();
       if (data.success) {
@@ -195,6 +199,7 @@ export default function Home() {
 
   const loadAssessmentDetail = async (assessmentId: number) => {
     try {
+      setSelectedStudentIds([]);
       const response = await fetch(`/api/assessments/${assessmentId}`);
       const data = await response.json();
       if (data.success) {
@@ -376,6 +381,86 @@ export default function Home() {
     } catch (error) {
       console.error('Error updating overall rating:', error);
       alert('Gagal kemaskini purata');
+    }
+  };
+
+  const toggleStudentSelection = (studentId: number) => {
+    setSelectedStudentIds(prev =>
+      prev.includes(studentId) ? prev.filter(id => id !== studentId) : [...prev, studentId]
+    );
+  };
+
+  // Ticks/unticks every student currently passing the search + unrated filters,
+  // leaving any selection made on rows that are filtered out untouched.
+  const toggleSelectAll = (visibleIds: number[], selectAll: boolean) => {
+    setSelectedStudentIds(prev =>
+      selectAll
+        ? Array.from(new Set([...prev, ...visibleIds]))
+        : prev.filter(id => !visibleIds.includes(id))
+    );
+  };
+
+  // Applies one mastery rating to every selected student. For subtopic-based
+  // assessments this marks all standard pembelajaran; the PURATA (TP) is left
+  // alone because it is a separate teacher judgement.
+  const handleBulkMasteryRating = async (ratingType: 'M' | 'TM' | null) => {
+    if (!selectedAssessment || selectedStudentIds.length === 0) return;
+
+    const hasSubtopics = !!(selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0);
+    const scope = hasSubtopics ? 'subtopics' : 'overall';
+
+    const action = ratingType ? MASTERY_INFO[ratingType] : 'kosongkan penilaian';
+    const target = hasSubtopics ? ' bagi semua standard pembelajaran' : '';
+    if (!confirm(`Tandakan ${selectedStudentIds.length} murid sebagai "${action}"${target}?`)) {
+      return;
+    }
+
+    setBulkSaving(true);
+    try {
+      const response = await fetch('/api/ratings/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assessment_id: selectedAssessment.assessment.id,
+          student_ids: selectedStudentIds,
+          rating_type: ratingType,
+          scope,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        const updated: number[] = data.data.updated_students;
+        setSelectedAssessment(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            students: prev.students.map(student => {
+              if (!updated.includes(student.id)) return student;
+              if (hasSubtopics) {
+                // Rewrite every subtopic row; the overall (PURATA) is unchanged.
+                return {
+                  ...student,
+                  ratings: prev.subtopics.map(subtopic => ({
+                    subtopic_id: subtopic.id,
+                    rating_type: ratingType,
+                  })),
+                };
+              }
+              return { ...student, ratings: [{ rating_type: ratingType }] };
+            }),
+          };
+        });
+        setSelectedStudentIds([]);
+      } else {
+        alert(data.error || 'Gagal kemaskini penilaian');
+      }
+    } catch (error) {
+      console.error('Error bulk updating ratings:', error);
+      alert('Gagal kemaskini penilaian');
+    } finally {
+      setBulkSaving(false);
     }
   };
 
@@ -1044,28 +1129,96 @@ export default function Home() {
                   </label>
                 </div>
 
+                {(() => {
+                  const hasSubtopics = !!(selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0);
+                  const visibleRows = selectedAssessment.students
+                    .map((student, index) => ({ student, index }))
+                    .filter(({ student }) => {
+                      const matchesSearch = !gradeSearch.trim() || student.name.toLowerCase().includes(gradeSearch.trim().toLowerCase());
+                      const matchesUnrated = !showUnratedOnly || !getFinalRating(student, hasSubtopics);
+                      return matchesSearch && matchesUnrated;
+                    });
+                  const visibleIds = visibleRows.map(({ student }) => student.id);
+                  const allVisibleSelected =
+                    visibleIds.length > 0 && visibleIds.every(id => selectedStudentIds.includes(id));
+                  const someVisibleSelected =
+                    !allVisibleSelected && visibleIds.some(id => selectedStudentIds.includes(id));
+
+                  return (
+                <>
+                {selectedStudentIds.length > 0 && (
+                  <div className="bulk-bar">
+                    <span className="bulk-count">
+                      ✅ {selectedStudentIds.length} murid dipilih
+                    </span>
+                    {hasSubtopics && (
+                      <span className="bulk-note">
+                        Akan ditandakan bagi semua standard pembelajaran (purata TP tidak berubah)
+                      </span>
+                    )}
+                    <div className="bulk-actions">
+                      {MASTERY_LEVELS.map(m => (
+                        <button
+                          key={m}
+                          className={`tp-btn ${m.toLowerCase()}`}
+                          disabled={bulkSaving}
+                          onClick={() => handleBulkMasteryRating(m)}
+                        >
+                          {MASTERY_INFO[m]}
+                        </button>
+                      ))}
+                      <button
+                        className="btn btn-secondary"
+                        disabled={bulkSaving}
+                        onClick={() => handleBulkMasteryRating(null)}
+                        style={{ padding: '6px 12px', fontSize: '12px' }}
+                      >
+                        Kosongkan
+                      </button>
+                      <button
+                        className="btn btn-secondary"
+                        disabled={bulkSaving}
+                        onClick={() => setSelectedStudentIds([])}
+                        style={{ padding: '6px 12px', fontSize: '12px' }}
+                      >
+                        Batal pilihan
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ overflowX: 'auto' }}>
                   <table className="students-table">
                     <thead>
                       <tr>
+                        <th style={{ width: '40px' }}>
+                          <input
+                            type="checkbox"
+                            aria-label="Pilih semua murid"
+                            title="Pilih semua murid"
+                            checked={allVisibleSelected}
+                            ref={el => { if (el) el.indeterminate = someVisibleSelected; }}
+                            onChange={(e) => toggleSelectAll(visibleIds, e.target.checked)}
+                          />
+                        </th>
                         <th>BIL</th>
                         <th>NAMA MURID</th>
                         <th style={{ minWidth: '500px' }}>TAHAP PENGUASAAN KESULURUHAN</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedAssessment.students
-                        .map((student, index) => ({ student, index }))
-                        .filter(({ student }) => {
-                          const hasSubtopics = !!(selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0);
-                          const matchesSearch = !gradeSearch.trim() || student.name.toLowerCase().includes(gradeSearch.trim().toLowerCase());
-                          const matchesUnrated = !showUnratedOnly || !getFinalRating(student, hasSubtopics);
-                          return matchesSearch && matchesUnrated;
-                        })
-                        .map(({ student, index }) => {
-                        const hasSubtopics = selectedAssessment.subtopics && selectedAssessment.subtopics.length > 0;
+                      {visibleRows.map(({ student, index }) => {
+                        const isChecked = selectedStudentIds.includes(student.id);
                         return (
-                          <tr key={student.id}>
+                          <tr key={student.id} className={isChecked ? 'row-selected' : ''}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                aria-label={`Pilih ${student.name}`}
+                                checked={isChecked}
+                                onChange={() => toggleStudentSelection(student.id)}
+                              />
+                            </td>
                             <td>{index + 1}</td>
                             <td><strong>{student.name}</strong></td>
                             <td>
@@ -1118,6 +1271,9 @@ export default function Home() {
                     </tbody>
                   </table>
                 </div>
+                </>
+                  );
+                })()}
               </div>
             ) : (
               <div className="empty-state">
