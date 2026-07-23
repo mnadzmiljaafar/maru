@@ -511,7 +511,8 @@ export default function Home() {
             </thead>
             <tbody>`;
 
-        // Rating colour mapping (TP levels for PURATA + binary mastery scale)
+        // Rating colour mapping (TP levels only). Binary mastery codes (M / TM)
+        // are intentionally absent so they print with no background colour.
         const tpColors: { [key: string]: string } = {
           'TP1': '#dc2626',
           'TP2': '#f97316',
@@ -520,8 +521,6 @@ export default function Home() {
           'TP5': '#22c55e',
           'TP6': '#3b82f6',
           'TD': '#9ca3af',
-          'M': '#22c55e',
-          'TM': '#dc2626',
         };
 
         // Student rows
@@ -535,9 +534,12 @@ export default function Home() {
             subtopics.forEach((subtopic: any) => {
               const rating = student.ratings?.find((r: any) => r.subtopic_id === subtopic.id);
               const ratingCode = rating?.rating_type || null;
-              const bgColor = ratingCode ? (tpColors[ratingCode] || '#ffffff') : '#ffffff';
+              const bgColor = (ratingCode && tpColors[ratingCode]) || '#ffffff';
               const cellText = ratingCode ? ratingLabel(ratingCode) : 'Tidak Dinilai';
-              const cellColor = ratingCode ? 'white' : '#6b7280';
+              // White text only reads on a coloured cell; uncoloured ratings use dark text.
+              const cellColor = ratingCode
+                ? (tpColors[ratingCode] ? 'white' : '#111827')
+                : '#6b7280';
 
               htmlContent += `
                 <td style="border: 1px solid #d1d5db; padding: 8px; text-align: center; background: ${bgColor}; color: ${cellColor}; font-weight: bold;">
@@ -548,8 +550,10 @@ export default function Home() {
 
           const avgCode = student.averageRating || (student.ratings && student.ratings.length > 0 && !hasSubtopics ? student.ratings[0].rating_type : null) || null;
           const avgText = avgCode ? ratingLabel(avgCode) : 'Belum dinilai';
-          const avgColor = avgCode ? (tpColors[avgCode] || '#ffffff') : '#ffffff';
-          const textColor = avgCode ? 'white' : '#6b7280';
+          const avgColor = (avgCode && tpColors[avgCode]) || '#ffffff';
+          const textColor = avgCode
+            ? (tpColors[avgCode] ? 'white' : '#111827')
+            : '#6b7280';
           const fontWeight = avgCode ? 'bold' : 'normal';
 
           htmlContent += `
